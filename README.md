@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Phyco Fractal Flight — Android Rendering Prototype
 
 This Godot project is the first technical gate from the Phyco Game Android MVP PRD. It is intentionally a benchmark, not the full MVP.
@@ -88,3 +89,6 @@ The most expensive variables are:
 - Normal estimation on surface hits
 
 If High is too expensive but Medium is viable, continue with the shader approach and tune. If Low cannot remain stable on the intended minimum device, use the PRD's hybrid fallback before building production systems.
+=======
+# Kaleidrift
+>>>>>>> origin/main
