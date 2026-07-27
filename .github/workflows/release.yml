@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.7.1
+          include-templates: true
+          use-dotnet: false
+      - name: Run smoke tests
+        run: |
+          godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
+          godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+      - name: Build Windows release
+        run: |
+          godot --headless --path . --export-release "Windows Desktop" build/windows/Kaleidrift.exe
+          cd build/windows && zip -r Kaleidrift-windows.zip Kaleidrift.exe Kaleidrift.pck
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/windows/Kaleidrift-windows.zip

@@ -297,6 +297,23 @@ For now, use focused branches and commits for individual improvements, such as:
 - `seeded-regions`
 - `save-system`
 
+## Build and test foundation
+
+KaleiDrift uses one Godot 4.7.1 project and shared gameplay code for Android, Windows, and Web. Generated output always belongs under `build/` and is not committed.
+
+```bash
+godot --headless --path . --quit-after 1
+godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
+godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
+godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
+godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
+```
+
+Pull requests validate startup, native smoke/integration tests, and Web/Windows exports. Pushes to `main` run the existing GitHub Pages workflow, then deploy only `build/web`; Pages must be enabled by the repository owner. Releases are created only from semantic `v*.*.*` tags and currently attach a Windows ZIP. Android signing and iOS distribution require owner-provided credentials and platform setup.
+
+Platform capability decisions live in `scripts/platform/` and all flight input is normalized through `scripts/input/`. Test physical Android devices, Windows, and Chrome/Edge/Firefox/Safari plus a mobile browser; automation does not replace device or browser validation. See `AGENTS.md` for repository safety and definition-of-done requirements.
+
 ## License
 
 No open-source license has been granted at this stage. Unless a license is added, the source code and assets remain all rights reserved.

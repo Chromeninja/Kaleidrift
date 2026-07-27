@@ -5,12 +5,17 @@
 # Builds and exports
 build/
 exports/
+Exports/
 *.apk
 *.aab
+*.exe
+*.pck
+*.zip
 
 # Android build files
 android/build/
 android/.gradle/
+android/local.properties
 
 # Editor files
 .vscode/

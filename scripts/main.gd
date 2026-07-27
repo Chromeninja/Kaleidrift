@@ -14,6 +14,8 @@ const TONE_MAP_AGX := 1
 const TONE_MAP_LINEAR := 2
 const SurvivalSessionScript := preload("res://scripts/gameplay/survival_session.gd")
 const ProceduralMusicControllerScript := preload("res://scripts/audio/procedural_music_controller.gd")
+const PlatformCapabilitiesScript := preload("res://scripts/platform/platform_capabilities.gd")
+const FlightInputAdapterScript := preload("res://scripts/input/flight_input_adapter.gd")
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
 const WEB_DEFAULT_QUALITY := 0
@@ -93,8 +95,7 @@ var automatic_quality := true
 var evaluation_elapsed := 0.0
 var stable_fast_elapsed := 0.0
 var frame_ms_samples: Array[float] = []
-var steering_touch_id := -1
-var steering_mouse_active := false
+var flight_input: FlightInputAdapter
 var interface_state := InterfaceState.MENU
 var current_game_mode := GameMode.ENDLESS
 var settings_visible := false
@@ -117,8 +118,8 @@ var damage_flash_strength := 0.0
 
 
 func _ready() -> void:
-	if _is_web_platform():
-		current_quality = WEB_DEFAULT_QUALITY
+	current_quality = PlatformCapabilities.default_quality()
+	flight_input = FlightInputAdapterScript.new()
 	_load_settings()
 	survival_session = SurvivalSessionScript.new()
 	survival_session.name = "SurvivalSession"
@@ -131,7 +132,7 @@ func _ready() -> void:
 	add_child(music_controller)
 	music_controller.set_music_enabled(_music_enabled_setting)
 	music_controller.set_volume_linear(_music_volume_setting)
-	if not _is_web_platform():
+	if not PlatformCapabilities.needs_audio_activation():
 		_start_music()
 	_build_render_pipeline()
 	_build_hud()
@@ -165,6 +166,9 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	var keyboard_steering := flight_input.keyboard_delta(delta)
+	if keyboard_steering != Vector2.ZERO:
+		_apply_steering_delta(keyboard_steering)
 	elapsed += delta
 	var basis := Basis(camera_orientation).orthonormalized()
 	var forward := -basis.z.normalized()
@@ -219,20 +223,9 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("reset_flight"):
 		_reset_flight()
 		return
-	if event is InputEventScreenTouch:
-		if event.pressed and steering_touch_id == -1 and not _is_over_hud_control(event.position):
-			steering_touch_id = event.index
-		elif not event.pressed and event.index == steering_touch_id:
-			steering_touch_id = -1
-	elif event is InputEventScreenDrag and event.index == steering_touch_id:
-		_apply_steering_delta(event.relative)
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			steering_mouse_active = not _is_over_hud_control(event.position)
-		else:
-			steering_mouse_active = false
-	elif event is InputEventMouseMotion and steering_mouse_active:
-		_apply_steering_delta(event.relative)
+	var steering_delta := flight_input.consume(event, _is_over_hud_control)
+	if steering_delta != Vector2.ZERO:
+		_apply_steering_delta(steering_delta)
 
 
 func _build_render_pipeline() -> void:
@@ -689,7 +682,7 @@ func _update_safe_layout() -> void:
 		return
 	var window_size := Vector2i(get_viewport().get_visible_rect().size)
 	var safe_rect := Rect2i(Vector2i.ZERO, window_size)
-	if OS.has_feature("android") or OS.has_feature("ios") or _is_web_platform():
+	if PlatformCapabilities.uses_safe_area():
 		var reported_safe_area := DisplayServer.get_display_safe_area()
 		if reported_safe_area.size.x > 0 and reported_safe_area.size.y > 0:
 			safe_rect = reported_safe_area
@@ -822,7 +815,7 @@ func _platform_supports_hdr_output() -> bool:
 	return (
 		not _is_web_platform()
 		and DisplayServer.get_name() != "headless"
-		and OS.get_name() in ["Windows", "macOS", "iOS", "visionOS"]
+		and PlatformCapabilities.supports_hdr_output()
 	)
 
 
@@ -916,7 +909,7 @@ func _sync_hdr_controls() -> void:
 
 
 func _is_web_platform() -> bool:
-	return OS.has_feature("web")
+	return PlatformCapabilities.is_web()
 
 
 func _is_user_activation_event(event: InputEvent) -> bool:
@@ -1029,8 +1022,7 @@ func _start_playing() -> void:
 	throttle_panel.visible = true
 	menu_panel.visible = false
 	gameplay_overlay.visible = current_game_mode == GameMode.SURVIVAL
-	steering_touch_id = -1
-	steering_mouse_active = false
+	flight_input.reset()
 
 
 func _show_main_menu() -> void:
@@ -1045,8 +1037,7 @@ func _show_main_menu() -> void:
 	main_menu_content.visible = true
 	settings_scroll.visible = false
 	game_over_content.visible = false
-	steering_touch_id = -1
-	steering_mouse_active = false
+	flight_input.reset()
 
 
 func _show_settings() -> void:
@@ -1054,8 +1045,7 @@ func _show_settings() -> void:
 	main_menu_content.visible = false
 	settings_scroll.visible = true
 	game_over_content.visible = false
-	steering_touch_id = -1
-	steering_mouse_active = false
+	flight_input.reset()
 
 
 func _handle_back_command() -> void:
@@ -1141,14 +1131,13 @@ func _on_survival_health_changed(current: int, maximum: int) -> void:
 
 func _on_survival_damaged() -> void:
 	damage_flash_strength = 0.20 if _reduced_motion_setting else 0.85
-	if OS.has_feature("android"):
+	if PlatformCapabilities.supports_haptics():
 		Input.vibrate_handheld(80, 0.55)
 
 
 func _on_survival_game_over(distance: float, final_score: int) -> void:
 	interface_state = InterfaceState.GAME_OVER
-	steering_touch_id = -1
-	steering_mouse_active = false
+	flight_input.reset()
 	safe_root.visible = true
 	throttle_panel.visible = false
 	menu_panel.visible = true

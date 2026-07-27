@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 
-KaleiDrift is a Godot 4 Android prototype. `project.godot` defines the project and input actions, while `main.tscn` is the entry scene. Runtime behavior and dynamically built UI live in `scripts/main.gd`. GPU ray-marching logic belongs in `shaders/fractal_flight.gdshader`. Android packaging settings are stored in `export_presets.cfg`, and device results should be recorded in `DEVICE_TEST_MATRIX.md`.
+KaleiDrift is a Godot 4.7.1 fractal-flight prototype targeting Android, Windows, and Web. `main.tscn` starts `scripts/main.gd`; Survival logic lives in `scripts/gameplay/`, audio in `scripts/audio/`, platform decisions in `scripts/platform/`, normalized input in `scripts/input/`, and GPU ray marching in `shaders/fractal_flight.gdshader`. Preserve Endless and Survival behavior, deterministic Survival calculations, adaptive quality, browser audio activation, and corridor-opening behavior.
 
-Treat `.godot/` as generated editor state. Do not commit builds from `Exports/`, Android packages, or signing material.
+Treat `.godot/` and `build/` as generated state. Do not commit builds, APKs, PCKs, ZIPs, signing material, SDK paths, or credentials. Do not rewrite Git history, change repository visibility, enable Pages, publish releases, push tags, or change the Android package identity without owner authorization. Never claim physical-device testing that was not performed.
 
 ## Build, Test, and Development Commands
 
@@ -14,10 +14,14 @@ Run these from the repository root with a current Godot 4 installation:
 godot --editor --path .
 godot --path .
 godot --headless --path . --quit-after 1
-godot --headless --path . --export-debug "Android" Exports/Kalei-Test.apk
+godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
+godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
+godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
+godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
 ```
 
-The first command opens the editor; the second runs `main.tscn`. The headless launch is a quick import and startup check. The export command builds the configured debug APK and requires Godot Android templates, an Android SDK, and a compatible JDK.
+The headless launch is a quick import and startup check. Android export requires matching templates, an Android SDK, and a compatible JDK. iOS is a retained future placeholder; do not implement it without macOS/Xcode work.
 
 ## Coding Style & Naming Conventions
 
@@ -27,7 +31,7 @@ Use Godot shader style in `.gdshader` files and descriptive `snake_case` uniform
 
 ## Testing Guidelines
 
-There is no automated test framework or coverage threshold. Before submitting, run the headless startup check and exercise steering, throttle, HUD hiding, reset, quality selection, and reduced motion. For rendering or UI changes, test portrait and landscape on a physical Android device. Record performance, heat, artifacts, crashes, and corridor failures in `DEVICE_TEST_MATRIX.md`; emulators are not sufficient for performance claims.
+Run the headless startup check and relevant native smoke/integration scripts before submitting. Add regression tests for deterministic logic, settings, platform decisions, and input normalization. Before release, exercise steering, throttle, HUD hiding, reset, quality selection, reduced motion, browser audio, resize/fullscreen, and both modes. For rendering/UI changes, test portrait and landscape on physical Android hardware and record performance, heat, artifacts, crashes, and corridor failures in `DEVICE_TEST_MATRIX.md`; emulators are not sufficient for performance claims.
 
 ## Commit & Pull Request Guidelines
 
