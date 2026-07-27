@@ -1,4 +1,4 @@
-# Phyco Prototype Device Test Matrix
+# KaleiDrift Device Test Matrix
 
 Use one row per test run. Keep screen brightness consistent and remove the phone case if heat becomes unsafe.
 

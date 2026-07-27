@@ -10,81 +10,24 @@ const QUALITY_PRESETS := [
 	{"name": "High", "render_scale": 1.0, "steps": 84, "detail": 5, "distance": 78.0}
 ]
 
-
-class FlightJoystick:
-	extends Control
-
-	signal moved(value: Vector2)
-
-	var knob_offset := Vector2.ZERO
-	var touch_id := -1
-	var mouse_down := false
-
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_STOP
-		gui_input.connect(_on_gui_input)
-		resized.connect(queue_redraw)
-
-	func _draw() -> void:
-		var center := size * 0.5
-		var radius := minf(size.x, size.y) * 0.46
-		draw_circle(center, radius, Color(0.02, 0.07, 0.12, 0.48))
-		draw_arc(center, radius, 0.0, TAU, 64, Color(0.55, 0.88, 1.0, 0.58), 2.0, true)
-		draw_circle(center + knob_offset, radius * 0.34, Color(0.48, 0.84, 1.0, 0.7))
-		draw_arc(center + knob_offset, radius * 0.34, 0.0, TAU, 40, Color(0.9, 0.98, 1.0, 0.9), 2.0, true)
-
-	func _on_gui_input(event: InputEvent) -> void:
-		if event is InputEventScreenTouch:
-			if event.pressed and touch_id == -1:
-				touch_id = event.index
-				_update_pointer(event.position)
-				accept_event()
-			elif not event.pressed and event.index == touch_id:
-				touch_id = -1
-				_release_pointer()
-				accept_event()
-		elif event is InputEventScreenDrag and event.index == touch_id:
-			_update_pointer(event.position)
-			accept_event()
-		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-			mouse_down = event.pressed
-			if mouse_down:
-				_update_pointer(event.position)
-			else:
-				_release_pointer()
-			accept_event()
-		elif event is InputEventMouseMotion and mouse_down:
-			_update_pointer(event.position)
-			accept_event()
-
-	func _update_pointer(local_position: Vector2) -> void:
-		var radius := minf(size.x, size.y) * 0.46
-		knob_offset = (local_position - size * 0.5).limit_length(radius)
-		moved.emit(knob_offset / radius)
-		queue_redraw()
-
-	func _release_pointer() -> void:
-		knob_offset = Vector2.ZERO
-		moved.emit(Vector2.ZERO)
-		queue_redraw()
-
-
 var render_viewport: SubViewport
 var render_rect: ColorRect
 var output_rect: TextureRect
 var shader_material: ShaderMaterial
 var hud_layer: CanvasLayer
 var safe_root: MarginContainer
-var top_bar: HBoxContainer
+var throttle_panel: PanelContainer
+var info_panel: PanelContainer
 var title_label: Label
 var metrics_label: Label
 var status_label: Label
+var throttle_label: Label
 var speed_slider: VSlider
 var speed_readout: Label
-var throttle_panel: PanelContainer
-var joystick: FlightJoystick
+var quality_label: Label
 var quality_selector: OptionButton
 var reduced_motion_toggle: CheckButton
+var hide_button: Button
 
 var camera_position := Vector3(0.0, 0.0, 2.0)
 var yaw := 0.0
@@ -96,8 +39,8 @@ var automatic_quality := true
 var evaluation_elapsed := 0.0
 var stable_fast_elapsed := 0.0
 var frame_ms_samples: Array[float] = []
-var joystick_vector := Vector2.ZERO
-var free_drag_active := false
+var steering_touch_id := -1
+var steering_mouse_active := false
 var hud_visible := true
 
 
@@ -107,14 +50,19 @@ func _ready() -> void:
 	_resize_render_target()
 	_apply_quality(current_quality)
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
-	status_label.text = "Joystick to steer • Throttle on the left"
+	status_label.text = "Drag anywhere to steer • Throttle on the left"
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		if not hud_visible:
+			_set_hud_visible(true)
+		else:
+			get_tree().quit()
 
 
 func _process(delta: float) -> void:
 	elapsed += delta
-	if joystick_vector.length_squared() > 0.0001:
-		_apply_steering_delta(joystick_vector * 420.0 * delta)
-
 	var basis := Basis.from_euler(Vector3(pitch, yaw, 0.0))
 	var forward := -basis.z.normalized()
 	var right := basis.x.normalized()
@@ -138,6 +86,10 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and not hud_visible:
+		_set_hud_visible(true)
+		get_viewport().set_input_as_handled()
+		return
 	if event.is_action_pressed("toggle_hud"):
 		_set_hud_visible(not hud_visible)
 		return
@@ -145,19 +97,24 @@ func _input(event: InputEvent) -> void:
 		_reset_flight()
 		return
 	if event is InputEventScreenTouch:
-		if event.pressed and not hud_visible and event.position.x < 120.0 and event.position.y < 120.0:
-			_set_hud_visible(true)
+		if event.pressed and steering_touch_id == -1 and not _is_over_hud_control(event.position):
+			steering_touch_id = event.index
+		elif not event.pressed and event.index == steering_touch_id:
+			steering_touch_id = -1
+	elif event is InputEventScreenDrag and event.index == steering_touch_id:
+		_apply_steering_delta(event.relative)
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		# When the HUD is hidden, retain the original desktop drag-anywhere steering.
-		if not hud_visible and event.position.x > get_viewport().get_visible_rect().size.x * 0.45:
-			free_drag_active = event.pressed
-	elif event is InputEventMouseMotion and free_drag_active:
+		if event.pressed:
+			steering_mouse_active = not _is_over_hud_control(event.position)
+		else:
+			steering_mouse_active = false
+	elif event is InputEventMouseMotion and steering_mouse_active:
 		_apply_steering_delta(event.relative)
 
 
 func _build_render_pipeline() -> void:
 	render_viewport = SubViewport.new()
-	render_viewport.name = "FractalViewport"
+	render_viewport.name = "KaleiDriftViewport"
 	render_viewport.disable_3d = true
 	render_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	render_viewport.transparent_bg = false
@@ -186,90 +143,53 @@ func _build_hud() -> void:
 	hud_layer = CanvasLayer.new()
 	hud_layer.name = "HUD"
 	add_child(hud_layer)
-
 	safe_root = MarginContainer.new()
 	safe_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hud_layer.add_child(safe_root)
 
-	var layout := VBoxContainer.new()
-	layout.add_theme_constant_override("separation", 8)
-	safe_root.add_child(layout)
-
-	top_bar = HBoxContainer.new()
-	top_bar.add_theme_constant_override("separation", 8)
-	layout.add_child(top_bar)
-	title_label = Label.new()
-	title_label.text = "PHYCO • FRACTAL FLIGHT"
-	title_label.add_theme_font_size_override("font_size", 18)
-	title_label.add_theme_color_override("font_color", Color(0.80, 0.93, 1.0))
-	top_bar.add_child(title_label)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_bar.add_child(spacer)
-	quality_selector = OptionButton.new()
-	quality_selector.add_item("Auto")
-	for preset in QUALITY_PRESETS:
-		quality_selector.add_item(str(preset["name"]))
-	quality_selector.item_selected.connect(_on_quality_selected)
-	top_bar.add_child(quality_selector)
-	reduced_motion_toggle = CheckButton.new()
-	reduced_motion_toggle.text = "Reduced motion"
-	reduced_motion_toggle.toggled.connect(_on_reduced_motion_toggled)
-	top_bar.add_child(reduced_motion_toggle)
-	var hide_button := Button.new()
-	hide_button.text = "Hide"
-	hide_button.pressed.connect(func() -> void: _set_hud_visible(false))
-	top_bar.add_child(hide_button)
-
-	metrics_label = Label.new()
-	metrics_label.add_theme_font_size_override("font_size", 15)
-	layout.add_child(metrics_label)
-	status_label = Label.new()
-	status_label.add_theme_font_size_override("font_size", 13)
-	status_label.add_theme_color_override("font_color", Color(0.67, 0.83, 0.94))
-	layout.add_child(status_label)
-
-	var controls := Control.new()
-	controls.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	layout.add_child(controls)
-	_build_throttle(controls)
-	joystick = FlightJoystick.new()
-	joystick.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	joystick.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	joystick.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	joystick.moved.connect(func(value: Vector2) -> void: joystick_vector = value)
-	controls.add_child(joystick)
+	var overlay := Control.new()
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	safe_root.add_child(overlay)
+	_build_throttle(overlay)
+	_build_info_panel(overlay)
 	_update_safe_layout()
+
+
+func _panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.015, 0.045, 0.075, 0.82)
+	style.border_color = Color(0.42, 0.82, 1.0, 0.48)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(18)
+	style.shadow_color = Color(0.0, 0.0, 0.0, 0.3)
+	style.shadow_size = 8
+	return style
 
 
 func _build_throttle(parent: Control) -> void:
 	throttle_panel = PanelContainer.new()
-	throttle_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	throttle_panel.set_anchors_preset(Control.PRESET_CENTER_LEFT)
 	throttle_panel.grow_horizontal = Control.GROW_DIRECTION_END
-	throttle_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.02, 0.06, 0.10, 0.58)
-	panel_style.border_color = Color(0.45, 0.82, 1.0, 0.38)
-	panel_style.set_border_width_all(1)
-	panel_style.set_corner_radius_all(18)
-	panel_style.content_margin_left = 10
-	panel_style.content_margin_right = 10
-	panel_style.content_margin_top = 10
-	panel_style.content_margin_bottom = 10
-	throttle_panel.add_theme_stylebox_override("panel", panel_style)
+	throttle_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+	var style := _panel_style()
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
+	throttle_panel.add_theme_stylebox_override("panel", style)
 	parent.add_child(throttle_panel)
 
 	var box := VBoxContainer.new()
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", 5)
+	box.add_theme_constant_override("separation", 10)
 	throttle_panel.add_child(box)
-	var label := Label.new()
-	label.text = "THROTTLE"
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 11)
-	box.add_child(label)
+	throttle_label = Label.new()
+	throttle_label.text = "THROTTLE"
+	throttle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	throttle_label.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
+	box.add_child(throttle_label)
 	speed_slider = VSlider.new()
-	speed_slider.custom_minimum_size = Vector2(58, 130)
+	speed_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	speed_slider.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	speed_slider.min_value = 0.25
 	speed_slider.max_value = 8.0
@@ -280,15 +200,75 @@ func _build_throttle(parent: Control) -> void:
 	speed_readout = Label.new()
 	speed_readout.text = "%.2f×" % speed
 	speed_readout.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	speed_readout.add_theme_font_size_override("font_size", 15)
 	speed_readout.add_theme_color_override("font_color", Color(0.78, 0.94, 1.0))
 	box.add_child(speed_readout)
 
 
+func _build_info_panel(parent: Control) -> void:
+	info_panel = PanelContainer.new()
+	info_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	info_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	var style := _panel_style()
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
+	info_panel.add_theme_stylebox_override("panel", style)
+	parent.add_child(info_panel)
+
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 9)
+	info_panel.add_child(content)
+	title_label = Label.new()
+	title_label.text = "KALEIDRIFT"
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	title_label.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0))
+	content.add_child(title_label)
+	metrics_label = Label.new()
+	metrics_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	metrics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(metrics_label)
+	status_label = Label.new()
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_label.add_theme_color_override("font_color", Color(0.67, 0.83, 0.94))
+	content.add_child(status_label)
+	var divider := HSeparator.new()
+	content.add_child(divider)
+	quality_label = Label.new()
+	quality_label.text = "RENDER QUALITY"
+	quality_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	quality_label.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
+	content.add_child(quality_label)
+	quality_selector = OptionButton.new()
+	quality_selector.add_item("Automatic")
+	for preset in QUALITY_PRESETS:
+		quality_selector.add_item(str(preset["name"]))
+	quality_selector.item_selected.connect(_on_quality_selected)
+	content.add_child(quality_selector)
+	reduced_motion_toggle = CheckButton.new()
+	reduced_motion_toggle.text = "Reduced motion"
+	reduced_motion_toggle.toggled.connect(_on_reduced_motion_toggled)
+	content.add_child(reduced_motion_toggle)
+	hide_button = Button.new()
+	hide_button.text = "Hide interface"
+	hide_button.pressed.connect(func() -> void: _set_hud_visible(false))
+	content.add_child(hide_button)
+
+
 func _apply_steering_delta(delta_pixels: Vector2) -> void:
 	const SENSITIVITY := 0.0035
-	yaw -= delta_pixels.x * SENSITIVITY
-	pitch = clamp(pitch - delta_pixels.y * SENSITIVITY, -1.45, 1.45)
+	yaw = wrapf(yaw - delta_pixels.x * SENSITIVITY, -PI, PI)
+	pitch = wrapf(pitch - delta_pixels.y * SENSITIVITY, -PI, PI)
+
+
+func _is_over_hud_control(position: Vector2) -> bool:
+	if not hud_visible:
+		return false
+	return (
+		throttle_panel.get_global_rect().has_point(position)
+		or info_panel.get_global_rect().has_point(position)
+	)
 
 
 func _on_speed_changed(value: float) -> void:
@@ -321,22 +301,47 @@ func _update_safe_layout() -> void:
 		var reported_safe_area := DisplayServer.get_display_safe_area()
 		if reported_safe_area.size.x > 0 and reported_safe_area.size.y > 0:
 			safe_rect = reported_safe_area
-	var padding := maxi(12, int(mini(window_size.x, window_size.y) * 0.025))
+	var short_side := float(mini(window_size.x, window_size.y))
+	var ui_scale := clampf(short_side / 720.0, 0.85, 2.2)
+	var padding := maxi(roundi(14.0 * ui_scale), roundi(short_side * 0.022))
 	safe_root.add_theme_constant_override("margin_left", safe_rect.position.x + padding)
 	safe_root.add_theme_constant_override("margin_top", safe_rect.position.y + padding)
 	safe_root.add_theme_constant_override("margin_right", window_size.x - safe_rect.end.x + padding)
 	safe_root.add_theme_constant_override("margin_bottom", window_size.y - safe_rect.end.y + padding)
 
-	var short_side := minf(window_size.x, window_size.y)
-	var joystick_size := clampf(short_side * 0.27, 132.0, 190.0)
-	joystick.custom_minimum_size = Vector2(joystick_size, joystick_size)
-	throttle_panel.custom_minimum_size = Vector2(
-		clampf(short_side * 0.15, 82.0, 98.0),
-		clampf(window_size.y * 0.40, 190.0, 265.0)
-	)
 	var portrait := window_size.y > window_size.x
-	title_label.visible = not portrait or window_size.x >= 650
-	reduced_motion_toggle.text = "Reduced" if portrait else "Reduced motion"
+	var available_height := float(safe_rect.size.y - padding * 2)
+	var throttle_width := clampf(
+		float(window_size.x) * (0.24 if portrait else 0.13),
+		100.0 * ui_scale,
+		180.0 * ui_scale
+	)
+	var throttle_height := available_height * (0.66 if portrait else 0.82)
+	throttle_panel.custom_minimum_size = Vector2(throttle_width, throttle_height)
+	throttle_panel.position = Vector2(0.0, -throttle_height * 0.5)
+	speed_slider.custom_minimum_size = Vector2(64.0 * ui_scale, 180.0 * ui_scale)
+
+	var info_width := clampf(
+		float(window_size.x) * (0.60 if portrait else 0.34),
+		250.0 * ui_scale,
+		410.0 * ui_scale
+	)
+	info_panel.custom_minimum_size = Vector2(info_width, 0.0)
+	var touch_height := 50.0 * ui_scale
+	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
+	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
+	hide_button.custom_minimum_size = Vector2(0.0, touch_height)
+
+	var body_font := roundi(14.0 * ui_scale)
+	title_label.add_theme_font_size_override("font_size", roundi(22.0 * ui_scale))
+	metrics_label.add_theme_font_size_override("font_size", body_font)
+	status_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
+	quality_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
+	throttle_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
+	speed_readout.add_theme_font_size_override("font_size", roundi(18.0 * ui_scale))
+	quality_selector.add_theme_font_size_override("font_size", body_font)
+	reduced_motion_toggle.add_theme_font_size_override("font_size", body_font)
+	hide_button.add_theme_font_size_override("font_size", body_font)
 
 
 func _resize_render_target() -> void:
@@ -358,7 +363,7 @@ func _apply_quality(index: int) -> void:
 	shader_material.set_shader_parameter("max_distance", float(preset["distance"]))
 	_resize_render_target()
 	if is_instance_valid(status_label):
-		status_label.text = "Quality changed to %s" % str(preset["name"])
+		status_label.text = "Quality: %s" % str(preset["name"])
 
 
 func _evaluate_automatic_quality() -> void:
@@ -383,7 +388,7 @@ func _evaluate_automatic_quality() -> void:
 func _update_metrics(latest_frame_ms: float) -> void:
 	var preset: Dictionary = QUALITY_PRESETS[current_quality]
 	var target_state := "PASS" if latest_frame_ms <= TARGET_FRAME_MS else "OVER"
-	metrics_label.text = "%d FPS • %.1f ms • %s • %s • %d×%d • %d steps" % [
+	metrics_label.text = "%d FPS • %.1f ms • %s\n%s • %d×%d • %d steps" % [
 		Engine.get_frames_per_second(), latest_frame_ms, target_state, str(preset["name"]),
 		render_viewport.size.x, render_viewport.size.y, int(preset["steps"])
 	]
@@ -391,11 +396,9 @@ func _update_metrics(latest_frame_ms: float) -> void:
 
 func _set_hud_visible(visible: bool) -> void:
 	hud_visible = visible
-	for child in hud_layer.get_children():
-		child.visible = visible
-	if not visible:
-		status_label.text = ""
-		joystick_vector = Vector2.ZERO
+	safe_root.visible = visible
+	steering_touch_id = -1
+	steering_mouse_active = false
 
 
 func _reset_flight() -> void:
