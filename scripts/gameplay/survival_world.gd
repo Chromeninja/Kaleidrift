@@ -25,10 +25,10 @@ var world_seed := 0
 var current_cell := EMPTY_CELL
 
 
-func reset(seed: int, player_position: Vector3) -> void:
+func reset(new_world_seed: int, player_position: Vector3) -> void:
 	obstacles.clear()
 	scored_obstacles.clear()
-	world_seed = seed
+	world_seed = new_world_seed
 	current_cell = EMPTY_CELL
 	update(player_position)
 

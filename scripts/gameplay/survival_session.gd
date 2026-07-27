@@ -38,7 +38,7 @@ func _ready() -> void:
 
 
 func start() -> void:
-	position = world.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
+	position = SurvivalWorld.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
 	previous_position = position
 	last_safe_position = position
 	distance_traveled = 0.0

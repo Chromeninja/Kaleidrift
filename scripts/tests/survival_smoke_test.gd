@@ -30,7 +30,7 @@ func _test_world_cells_are_deterministic() -> void:
 
 func _test_open_world_has_free_space_and_solids() -> void:
 	var world = SurvivalWorldScript.new()
-	var safe_spawn: Vector3 = world.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
+	var safe_spawn: Vector3 = SurvivalWorld.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
 	assert(world.get_world_sdf(safe_spawn) >= 0.85)
 	world.reset(12345, safe_spawn)
 	var safe_direction: Vector3 = world.find_safest_direction(safe_spawn, 0.22)
@@ -81,7 +81,7 @@ func _test_open_world_has_free_space_and_solids() -> void:
 
 func _test_swept_collisions() -> void:
 	var world = SurvivalWorldScript.new()
-	var start := world.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
+	var start := SurvivalWorld.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
 	world.reset(67890, start)
 	assert(not world.obstacles.is_empty())
 	var obstacle = world.obstacles[0]
