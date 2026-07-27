@@ -2,15 +2,14 @@ name: Deploy Web build to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: github-pages
   cancel-in-progress: true
 
 jobs:
@@ -19,49 +18,35 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
-      - name: Set up Godot
+      - name: Set up Godot 4.7.1 and export templates
         uses: chickensoft-games/setup-godot@v2
         with:
           version: 4.7.1
           include-templates: true
           use-dotnet: false
-
-      - name: Check project startup
+      - name: Validate project startup
         run: godot --headless --rendering-method gl_compatibility --path . --quit-after 1
-
-      - name: Run automated checks
-        run: |
-          godot --headless --path . --script res://scripts/tests/procedural_music_smoke_test.gd
-          godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
-          godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
-          godot --headless --path . --script res://scripts/tests/platform_smoke_test.gd
-          godot --headless --path . --script res://scripts/tests/resource_load_validation.gd
-
       - name: Export single-threaded Web build
+        run: godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
+      - name: Validate Web artifact
         run: |
-          mkdir -p build/web
-          godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
           test -f build/web/index.html
           test -f build/web/index.js
           test -f build/web/index.wasm
           test -f build/web/index.pck
           touch build/web/.nojekyll
-
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
-
-      - name: Upload GitHub Pages artifact
+      - name: Upload Web artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: build/web
-
   deploy:
+    needs: build
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
     permissions:
       pages: write
       id-token: write

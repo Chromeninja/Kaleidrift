@@ -170,7 +170,7 @@ Current browser assumptions and limitations:
 
 ### Deploy to GitHub Pages
 
-The `Deploy Web build to GitHub Pages` workflow checks project startup, creates a fresh Web export, and deploys it with the official GitHub Pages actions whenever `main` is pushed. Generated Web files stay out of source control.
+The `.github/workflows/deploy-web.yml` workflow checks project startup with Godot 4.7.1, creates a fresh single-threaded Compatibility Web export, verifies `index.html`, JavaScript, WASM, and PCK files, and deploys only `build/web` with the official GitHub Pages actions whenever `main` is pushed. Generated Web files stay out of source control.
 
 In the repository's GitHub settings, set **Pages → Build and deployment → Source** to **GitHub Actions**. The export uses relative asset references, so the deployed game works at a repository URL such as `https://<owner>.github.io/KaleiDrift/`.
 
@@ -310,7 +310,7 @@ godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidr
 godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
 ```
 
-Pull requests validate startup, native smoke/integration tests, and Web/Windows exports. Pushes to `main` run the existing GitHub Pages workflow, then deploy only `build/web`; Pages must be enabled by the repository owner. Releases are created only from semantic `v*.*.*` tags and currently attach a Windows ZIP. Android signing and iOS distribution require owner-provided credentials and platform setup.
+Pull requests validate startup, native smoke/integration tests, and Web/Windows exports. Pushes to `main` run `.github/workflows/deploy-web.yml`, which deploys only `build/web`; Pages must be enabled by the repository owner. Releases are created only from semantic `v*.*.*` tags and currently attach a Windows ZIP. Android signing and iOS distribution require owner-provided credentials and platform setup.
 
 Platform capability decisions live in `scripts/platform/` and all flight input is normalized through `scripts/input/`. Test physical Android devices, Windows, and Chrome/Edge/Firefox/Safari plus a mobile browser; automation does not replace device or browser validation. See `AGENTS.md` for repository safety and definition-of-done requirements.
 

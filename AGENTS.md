@@ -23,6 +23,8 @@ godot --headless --rendering-method gl_compatibility --path . --export-release "
 
 The headless launch is a quick import and startup check. Android export requires matching templates, an Android SDK, and a compatible JDK. iOS is a retained future placeholder; do not implement it without macOS/Xcode work.
 
+Web deployment is handled only by `.github/workflows/deploy-web.yml`. It exports `Web` to `build/web/index.html`, verifies its HTML/JavaScript/WASM/PCK artifact, and uploads only `build/web`; never deploy the repository root or commit generated output.
+
 ## Coding Style & Naming Conventions
 
 Follow existing Godot conventions: tabs for GDScript indentation, `snake_case` for variables and functions, `PascalCase` for engine types, and `UPPER_SNAKE_CASE` for constants. Add return and parameter types where practical. Keep callbacks named `_on_<source>_<event>` and private helpers prefixed with `_`.
