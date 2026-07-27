@@ -1,0 +1,26 @@
+# Godot-generated files
+.godot/
+.import/
+
+# Builds and exports
+build/
+exports/
+*.apk
+*.aab
+
+# Android build files
+android/build/
+android/.gradle/
+
+# Editor files
+.vscode/
+.idea/
+
+# Sensitive signing files
+*.keystore
+*.jks
+*.p12
+
+# Operating-system files
+.DS_Store
+Thumbs.db
