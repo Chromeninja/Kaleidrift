@@ -18,7 +18,9 @@ android/.gradle/
 android/local.properties
 
 # Editor files
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
 .idea/
 
 # Sensitive signing files

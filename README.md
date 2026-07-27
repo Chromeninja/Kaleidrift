@@ -153,8 +153,11 @@ The Web preset uses Godot's Compatibility renderer and a single-threaded WebAsse
 3. Serve the directory over HTTP; Web exports do not run correctly from a `file://` URL:
 
    ```bash
-   python -m http.server 8000 --directory build/web
-   ```
+    python -m http.server 8000 --directory build/web
+    ```
+
+   In VS Code, run **Tasks: Run Task → Serve Web build locally**; it exports first, then serves the game at `http://localhost:8000/`.
+   Use **Run and Debug → Chrome: Debug local Web build** to export, serve, and open DevTools automatically. Use **Tasks: Run Task → Run Web export validation** for the required artifact check.
 
 4. Open `http://localhost:8000/`.
 

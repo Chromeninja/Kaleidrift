@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Export Web build",
+      "type": "shell",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--rendering-method", "gl_compatibility", "--path", ".", "--export-release", "Web", "build/web/index.html"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Serve Web build locally",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "http.server", "8000", "--directory", "build/web"],
+      "dependsOn": "Export Web build",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "web",
+        "severity": "info",
+        "pattern": {
+          "regexp": ".*"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Serving HTTP on.*"
+        }
+      }
+    },
+    {
+      "label": "Run Web export validation",
+      "type": "shell",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", ".", "--script", "res://scripts/ci/validate_web_export.gd"],
+      "dependsOn": "Export Web build",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Godot smoke tests",
+      "type": "shell",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": ["--headless", "--path", ".", "--script", "res://scripts/tests/survival_integration_test.gd"],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}
