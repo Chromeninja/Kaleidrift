@@ -1,13 +1,13 @@
 # KaleiDrift
 
-**Two ways to fly through an endless fractal world on Android**
+**Two ways to fly through an endless fractal world on Android and the Web**
 
 KaleiDrift is a visually reactive flight game with two complementary modes:
 
 - **Endless:** the original calm exploration experience. The world opens around the player and has no collision punishment or fail state.
 - **Survival:** free flight through the same deterministic fractal world in any direction. Walls and spatially generated obstacles remove integer health, and the run ends at zero health.
 
-> **Development status:** Early Android rendering prototype. The current build validates the core visual approach, mobile performance, flight controls, adaptive quality, and proximity-based path opening. It is not yet the complete MVP.
+> **Development status:** Early Android rendering prototype with an additional browser preview. The current build validates the core visual approach, mobile performance, flight controls, adaptive quality, and proximity-based path opening. It is not yet the complete MVP.
 
 ## Product Vision
 
@@ -41,6 +41,8 @@ Implemented or under active validation:
 - Fully offline procedural retro-ambient music with deterministic regional harmony
 - Speed, Survival proximity, game-mode, and reduced-motion music reactivity
 - Persisted procedural-music enable and volume controls
+- Single-threaded browser export suitable for GitHub Pages
+- Browser capability handling for SDR output, audio activation, quality defaults, and exit behavior
 
 Not yet implemented:
 
@@ -103,9 +105,11 @@ The final MVP will also include optional phone-tilt steering, neutral-position r
 - [Godot Engine 4](https://godotengine.org/)
 - GDScript
 - Godot Mobile renderer
+- Godot Compatibility renderer for Web exports
 - Fragment-shader ray marching
 - Signed-distance-field-based fractal rendering
 - Android APK/AAB export
+- WebAssembly browser export
 
 The project avoids relying on compute shaders as a core Android requirement. If the ray-marched approach cannot meet the target performance across supported devices, the planned fallback is a hybrid of lower-cost shader surfaces, instanced procedural geometry, fog, and post-processing.
 
@@ -114,6 +118,7 @@ The project avoids relying on compute shaders as a core Android requirement. If 
 ### Requirements
 
 - A current stable Godot 4 release
+- Matching Godot Web export templates
 - Godot Android build template
 - Android SDK
 - Supported JDK for your Godot version
@@ -134,6 +139,41 @@ The project avoids relying on compute shaders as a core Android requirement. If 
 
 Desktop testing is useful for development, but Android feasibility must be judged on physical devices rather than an emulator.
 
+### Run in a Browser
+
+The Web preset uses Godot's Compatibility renderer and a single-threaded WebAssembly build so it can run on ordinary static hosting, including GitHub Pages.
+
+1. Install the Web export templates that match the project's Godot version.
+2. Export the `Web` preset to an empty directory:
+
+   ```bash
+   godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
+   ```
+
+3. Serve the directory over HTTP; Web exports do not run correctly from a `file://` URL:
+
+   ```bash
+   python -m http.server 8000 --directory build/web
+   ```
+
+4. Open `http://localhost:8000/`.
+
+The browser build starts at Low quality when there is no saved preference, then retains the normal Automatic, Low, Medium, and High controls. Browser output is SDR. Tone mapping and color controls remain available, but HDR output controls are disabled. Music begins after the first keyboard, mouse, touch, or controller-button interaction because browsers require user activation for audio.
+
+Current browser assumptions and limitations:
+
+- A current browser with WebAssembly and WebGL 2 support is required.
+- Chrome, Firefox, Edge, and Safari should be tested independently; GPU and shader behavior can differ.
+- The build is single-threaded and does not require cross-origin-isolation headers.
+- Closing the browser tab is left to the browser, so the in-game Exit button is hidden.
+- Settings use Godot's browser-backed `user://` storage and are local to the site origin.
+
+### Deploy to GitHub Pages
+
+The `Deploy Web build to GitHub Pages` workflow checks project startup, creates a fresh Web export, and deploys it with the official GitHub Pages actions whenever `main` is pushed. Generated Web files stay out of source control.
+
+In the repository's GitHub settings, set **Pages → Build and deployment → Source** to **GitHub Actions**. The export uses relative asset references, so the deployed game works at a repository URL such as `https://<owner>.github.io/KaleiDrift/`.
+
 ## Export to Android
 
 1. Install the Godot Android build template.
@@ -144,6 +184,8 @@ Desktop testing is useful for development, but Android feasibility must be judge
 6. Install and test the APK on a physical Android phone.
 
 Do not commit signing keys, keystores, exported APKs, AABs, or local credentials to the repository.
+
+Do not commit generated browser exports either; the Pages workflow produces them from the current source.
 
 ## Device Testing
 
@@ -170,6 +212,8 @@ Suggested prototype performance bands:
 - **30 FPS:** approximately 33.3 ms per frame
 
 See [`DEVICE_TEST_MATRIX.md`](DEVICE_TEST_MATRIX.md) for structured test recording.
+
+For browser validation, test at least one Chromium browser, Firefox, Safari where available, and one mobile browser. Verify loading, resizing, pointer and touch input, both game modes, audio activation, settings persistence, SDR messaging, and browser-console output.
 
 ## Prototype Gate
 

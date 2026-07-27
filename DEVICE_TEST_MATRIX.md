@@ -10,6 +10,30 @@ Use one row per test run. Keep screen brightness consistent and remove the phone
 |  |  |  | Landscape | Medium | Medium |  |  |  |  |  |  |
 |  |  |  | Landscape | High | High |  |  |  |  |  |  |
 
+## Web browser test matrix
+
+Use the deployed GitHub Pages URL for final results. A local HTTP server is suitable for development checks but does not replace the deployed-path test.
+
+| Device / OS | Browser and version | Orientation / viewport | Mode | Quality | Avg FPS | Worst sustained FPS | Audio after first input | Resize / safe area | Settings persist | Shader artifacts | Console errors / notes |
+|---|---|---|---|---|---:|---:|---|---|---|---|---|
+| Desktop | Chrome / Edge | 1280×720 | Endless | Auto |  |  |  |  |  |  |  |
+| Desktop | Firefox | 1280×720 | Survival | Auto |  |  |  |  |  |  |  |
+| macOS / iOS | Safari | Landscape | Endless | Low |  |  |  |  |  |  |  |
+| Mobile | Chrome or Safari | Portrait | Survival | Low |  |  |  |  |  |  |  |
+
+For each browser, verify:
+
+- The loading screen completes at the repository Pages path, not only at a domain root.
+- Mouse drag, touch drag, throttle, keyboard reset, and HUD controls respond where available.
+- Endless and Survival start, run, and return to the menu correctly.
+- Automatic, Low, Medium, and High quality selections resize the internal render target.
+- Reduced motion changes the visual response.
+- Music remains silent before browser activation, begins after the first interaction, and responds to its toggle and volume.
+- HDR output controls are disabled and the settings screen explains that Web output is SDR.
+- Settings survive a reload on the same site origin.
+- Window resizing and portrait/landscape changes preserve readable controls and reported safe areas.
+- The browser console contains no uncaught errors, shader compilation failures, or missing-file requests.
+
 ## Decision after testing
 
 - **Proceed with ray marching:** Newer and mid-range phones meet the gate at acceptable quality.

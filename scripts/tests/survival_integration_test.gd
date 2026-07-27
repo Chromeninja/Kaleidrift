@@ -30,9 +30,9 @@ func _run() -> void:
 	assert(initial_rendered_forward.dot(spawn_forward) > 0.95)
 
 	var position_before_turn: Vector3 = main_scene.survival_session.position
+	var orientation_before_turn: Quaternion = main_scene.camera_orientation
 	main_scene._apply_steering_delta(Vector2(180.0, -110.0))
-	assert(not is_zero_approx(main_scene.yaw))
-	assert(not is_zero_approx(main_scene.pitch))
+	assert(not main_scene.camera_orientation.is_equal_approx(orientation_before_turn))
 	for _frame in 8:
 		await physics_frame
 		await process_frame

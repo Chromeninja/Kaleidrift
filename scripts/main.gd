@@ -16,6 +16,7 @@ const SurvivalSessionScript := preload("res://scripts/gameplay/survival_session.
 const ProceduralMusicControllerScript := preload("res://scripts/audio/procedural_music_controller.gd")
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
+const WEB_DEFAULT_QUALITY := 0
 const QUALITY_PRESETS := [
 	{"name": "Low", "render_scale": 0.45, "steps": 44, "detail": 3, "distance": 46.0},
 	{"name": "Medium", "render_scale": 0.64, "steps": 64, "detail": 4, "distance": 62.0},
@@ -83,8 +84,8 @@ var score_label: Label
 var damage_flash: ColorRect
 
 var camera_position := Vector3(0.0, 0.0, 2.0)
-var yaw := 0.0
-var pitch := 0.0
+# A quaternion avoids Euler poles so unrestricted 3D flight stays continuous.
+var camera_orientation := Quaternion.IDENTITY
 var speed := 2.5
 var elapsed := 0.0
 var current_quality := 1
@@ -109,12 +110,15 @@ var output_max_linear_value := 1.0
 var _reduced_motion_setting := false
 var _music_enabled_setting := true
 var _music_volume_setting := 0.7
+var _music_started := false
 var survival_session
 var music_controller: ProceduralMusicController
 var damage_flash_strength := 0.0
 
 
 func _ready() -> void:
+	if _is_web_platform():
+		current_quality = WEB_DEFAULT_QUALITY
 	_load_settings()
 	survival_session = SurvivalSessionScript.new()
 	survival_session.name = "SurvivalSession"
@@ -127,7 +131,8 @@ func _ready() -> void:
 	add_child(music_controller)
 	music_controller.set_music_enabled(_music_enabled_setting)
 	music_controller.set_volume_linear(_music_volume_setting)
-	music_controller.start(MUSIC_JOURNEY_SEED)
+	if not _is_web_platform():
+		_start_music()
 	_build_render_pipeline()
 	_build_hud()
 	_resize_render_target()
@@ -153,7 +158,7 @@ func _notification(what: int) -> void:
 func _physics_process(delta: float) -> void:
 	if interface_state != InterfaceState.PLAYING or current_game_mode != GameMode.SURVIVAL:
 		return
-	var basis := Basis.from_euler(Vector3(pitch, yaw, 0.0))
+	var basis := Basis(camera_orientation).orthonormalized()
 	var forward := -basis.z.normalized()
 	survival_session.physics_step(delta, speed, forward)
 	camera_position = survival_session.position
@@ -161,7 +166,7 @@ func _physics_process(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	elapsed += delta
-	var basis := Basis.from_euler(Vector3(pitch, yaw, 0.0))
+	var basis := Basis(camera_orientation).orthonormalized()
 	var forward := -basis.z.normalized()
 	var right := basis.x.normalized()
 	var up := basis.y.normalized()
@@ -198,6 +203,8 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _is_user_activation_event(event):
+		_start_music()
 	if event.is_action_pressed("ui_cancel"):
 		_handle_back_command()
 		get_viewport().set_input_as_handled()
@@ -384,6 +391,7 @@ func _build_menu_panel(parent: Control) -> void:
 	exit_button = Button.new()
 	exit_button.text = "Exit Game"
 	exit_button.pressed.connect(func() -> void: get_tree().quit())
+	exit_button.visible = not _is_web_platform()
 	main_menu_content.add_child(exit_button)
 
 	settings_scroll = ScrollContainer.new()
@@ -570,8 +578,12 @@ func _build_gameplay_overlay() -> void:
 
 func _apply_steering_delta(delta_pixels: Vector2) -> void:
 	const SENSITIVITY := 0.0035
-	yaw = wrapf(yaw - delta_pixels.x * SENSITIVITY, -PI, PI)
-	pitch = wrapf(pitch - delta_pixels.y * SENSITIVITY, -PI, PI)
+	var basis := Basis(camera_orientation).orthonormalized()
+	var horizontal_rotation := Quaternion(basis.y, -delta_pixels.x * SENSITIVITY)
+	camera_orientation = (horizontal_rotation * camera_orientation).normalized()
+	basis = Basis(camera_orientation).orthonormalized()
+	var vertical_rotation := Quaternion(basis.x, -delta_pixels.y * SENSITIVITY)
+	camera_orientation = (vertical_rotation * camera_orientation).normalized()
 
 
 func _is_over_hud_control(position: Vector2) -> bool:
@@ -606,6 +618,8 @@ func _on_music_toggled(enabled: bool) -> void:
 	_music_enabled_setting = enabled
 	if is_instance_valid(music_controller):
 		music_controller.set_music_enabled(enabled)
+	if enabled:
+		_start_music()
 	_save_settings()
 
 
@@ -675,7 +689,7 @@ func _update_safe_layout() -> void:
 		return
 	var window_size := Vector2i(get_viewport().get_visible_rect().size)
 	var safe_rect := Rect2i(Vector2i.ZERO, window_size)
-	if OS.has_feature("android"):
+	if OS.has_feature("android") or OS.has_feature("ios") or _is_web_platform():
 		var reported_safe_area := DisplayServer.get_display_safe_area()
 		if reported_safe_area.size.x > 0 and reported_safe_area.size.y > 0:
 			safe_rect = reported_safe_area
@@ -805,12 +819,17 @@ func _apply_quality(index: int) -> void:
 
 
 func _platform_supports_hdr_output() -> bool:
-	return OS.get_name() in ["Windows", "macOS", "iOS", "visionOS"]
+	return (
+		not _is_web_platform()
+		and DisplayServer.get_name() != "headless"
+		and OS.get_name() in ["Windows", "macOS", "iOS", "visionOS"]
+	)
 
 
 func _renderer_supports_internal_hdr() -> bool:
-	var rendering_method := str(ProjectSettings.get_setting("rendering/renderer/rendering_method", "gl_compatibility"))
-	return rendering_method != "gl_compatibility"
+	if _is_web_platform():
+		return false
+	return RenderingServer.get_current_rendering_method() != "gl_compatibility"
 
 
 func _should_use_internal_hdr() -> bool:
@@ -852,6 +871,10 @@ func _on_output_max_linear_value_changed(value: float) -> void:
 func _update_hdr_ui() -> void:
 	if not is_instance_valid(hdr_status_label):
 		return
+	if _is_web_platform():
+		hdr_status_label.text = "Status: Web browsers use SDR output"
+		hdr_values_label.text = "Tone mapping and color controls remain available in SDR."
+		return
 	var status := "Unsupported"
 	if hdr_output_active:
 		status = "HDR output active"
@@ -878,6 +901,11 @@ func _reset_hdr_settings() -> void:
 func _sync_hdr_controls() -> void:
 	if not is_instance_valid(hdr_mode_selector):
 		return
+	var hdr_controls_enabled := not _is_web_platform()
+	hdr_mode_selector.disabled = not hdr_controls_enabled
+	reference_white_slider.editable = hdr_controls_enabled
+	peak_brightness_slider.editable = hdr_controls_enabled
+	hdr_reset_button.disabled = not hdr_controls_enabled
 	hdr_mode_selector.select(hdr_mode)
 	tone_map_selector.select(tone_map_mode)
 	reference_white_slider.value = reference_white
@@ -885,6 +913,29 @@ func _sync_hdr_controls() -> void:
 	highlight_slider.value = highlight_intensity
 	gamut_slider.value = gamut_intensity
 	_update_hdr_ui()
+
+
+func _is_web_platform() -> bool:
+	return OS.has_feature("web")
+
+
+func _is_user_activation_event(event: InputEvent) -> bool:
+	if event is InputEventKey:
+		return event.pressed and not event.echo
+	if event is InputEventMouseButton:
+		return event.pressed
+	if event is InputEventScreenTouch:
+		return event.pressed
+	if event is InputEventJoypadButton:
+		return event.pressed
+	return false
+
+
+func _start_music() -> void:
+	if _music_started or not _music_enabled_setting or not is_instance_valid(music_controller):
+		return
+	_music_started = true
+	music_controller.start(MUSIC_JOURNEY_SEED)
 
 
 func _load_settings() -> void:
@@ -962,9 +1013,11 @@ func _start_survival() -> void:
 	speed = maxf(speed, speed_slider.min_value)
 	speed_slider.value = speed
 	survival_session.start()
-	var spawn_forward: Vector3 = survival_session.get_spawn_forward()
-	yaw = atan2(-spawn_forward.x, -spawn_forward.z)
-	pitch = asin(clampf(spawn_forward.y, -1.0, 1.0))
+	var spawn_forward: Vector3 = survival_session.get_spawn_forward().normalized()
+	var spawn_up := Vector3.UP
+	if absf(spawn_forward.dot(spawn_up)) > 0.999:
+		spawn_up = Vector3.FORWARD
+	camera_orientation = Basis.looking_at(spawn_forward, spawn_up).get_rotation_quaternion().normalized()
 	camera_position = survival_session.position
 	_start_playing()
 
@@ -1023,8 +1076,7 @@ func _reset_flight() -> void:
 
 func _reset_endless_flight() -> void:
 	camera_position = Vector3(0.0, 0.0, 2.0)
-	yaw = 0.0
-	pitch = 0.0
+	camera_orientation = Quaternion.IDENTITY
 	speed = 2.5
 	if is_instance_valid(speed_slider):
 		speed_slider.value = speed
