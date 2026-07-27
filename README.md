@@ -1,16 +1,17 @@
 # KaleiDrift
 
-**An endless fractal flight experience for Android**
+**Two ways to fly through an endless fractal world on Android**
 
-KaleiDrift is a calm, visually reactive exploration game where the player flies continuously through an effectively infinite, procedurally generated fractal world.
+KaleiDrift is a visually reactive flight game with two complementary modes:
 
-There are no enemies, scores, collectibles, objectives, or fail states. The experience is built around movement, color, sound, discovery, and maintaining a relaxing sense of flow.
+- **Endless:** the original calm exploration experience. The world opens around the player and has no collision punishment or fail state.
+- **Survival:** free flight through the same deterministic fractal world in any direction. Walls and spatially generated obstacles remove integer health, and the run ends at zero health.
 
 > **Development status:** Early Android rendering prototype. The current build validates the core visual approach, mobile performance, flight controls, adaptive quality, and proximity-based path opening. It is not yet the complete MVP.
 
 ## Product Vision
 
-KaleiDrift combines free flight with an evolving psychedelic environment. Players can travel in any direction, adjust their speed, and move through tunnels, chambers, and abstract structures without reaching a hard boundary.
+KaleiDrift combines free flight with an evolving psychedelic environment. Both modes allow unrestricted three-dimensional exploration. Endless is low pressure; Survival adds readable hazards, health, score, near-miss rewards, and deterministic challenge without changing the world's identity.
 
 When a player approaches a surface, the environment opens or deforms to preserve a traversable path. The world should remain visually interesting without becoming punitive or interrupting forward motion.
 
@@ -33,6 +34,13 @@ Implemented or under active validation:
 - Hideable controls and performance HUD
 - Reduced-motion visual option
 - Live FPS, frame-time, render-resolution, and ray-step information
+- Endless and Survival mode selection
+- Deterministic open-world Survival geometry and spatial-cell obstacles shared by rendering and collision
+- Five-point integer health, temporary hit invulnerability, scoring, game over, and retry
+- Safe-heading spawn selection, a visible five-second spawn shield, and wall-hit rollback to recent safe space
+- Fully offline procedural retro-ambient music with deterministic regional harmony
+- Speed, Survival proximity, game-mode, and reduced-motion music reactivity
+- Persisted procedural-music enable and volume controls
 
 Not yet implemented:
 
@@ -43,8 +51,9 @@ Not yet implemented:
 - Journey autosave, resume, and new-journey flow
 - Optional phone-tilt steering and recalibration
 - Steering sensitivity and independent axis inversion
-- Reactive ambient audio
 - Production-ready menus, controls, and onboarding
+- Additional Survival obstacle archetypes and tuned difficulty bands
+- Local Survival high scores and run history
 
 ## MVP Goals
 
@@ -62,6 +71,7 @@ The Android MVP is intended to deliver:
 - Full offline play after installation
 - Portrait and landscape support
 - Comfort settings for sensitivity, inversion, motion, and flashing
+- A distinct Survival loop with fair, shader-matched collisions and readable damage feedback
 
 ## MVP Success Targets
 
@@ -205,7 +215,7 @@ If Low quality cannot remain stable on the intended minimum device, the renderin
 - [ ] Local autosave and resume
 - [ ] Tilt steering and recalibration
 - [ ] Sensitivity and inversion settings
-- [ ] Reactive ambient audio
+- [x] Reactive ambient audio
 - [ ] Production-ready comfort settings
 - [ ] First-time control hints
 
@@ -221,8 +231,8 @@ If Low quality cannot remain stable on the intended minimum device, the renderin
 
 KaleiDrift's MVP intentionally excludes:
 
-- Combat, enemies, or fail states
-- Scores, collectibles, missions, and progression gates
+- Combat and enemies
+- Missions, progression gates, and currencies
 - Achievements and leaderboards
 - Accounts, cloud saves, and online services
 - Multiplayer and social sharing
