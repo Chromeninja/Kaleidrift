@@ -316,4 +316,8 @@ Platform capability decisions live in `scripts/platform/` and all flight input i
 
 ## License
 
-No open-source license has been granted at this stage. Unless a license is added, the source code and assets remain all rights reserved.
+KaleiDrift source code is licensed under the [MIT License](LICENSE).
+
+Game artwork, music, audio, branding, promotional media, and other creative assets are not covered by the MIT License unless explicitly stated. See [ASSET_LICENSE.md](ASSET_LICENSE.md) for details.
+
+Third-party components remain subject to their respective licenses.
