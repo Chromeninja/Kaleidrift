@@ -50,7 +50,7 @@ func _ready() -> void:
 	_resize_render_target()
 	_apply_quality(current_quality)
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
-	status_label.text = "Drag anywhere to steer • Throttle on the left"
+	status_label.text = "Drag anywhere to steer • Throttle centered below"
 
 
 func _notification(what: int) -> void:
@@ -168,8 +168,8 @@ func _panel_style() -> StyleBoxFlat:
 
 func _build_throttle(parent: Control) -> void:
 	throttle_panel = PanelContainer.new()
-	throttle_panel.set_anchors_preset(Control.PRESET_CENTER_LEFT)
-	throttle_panel.grow_horizontal = Control.GROW_DIRECTION_END
+	throttle_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	throttle_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	throttle_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	var style := _panel_style()
 	style.content_margin_left = 14
@@ -318,7 +318,14 @@ func _update_safe_layout() -> void:
 	)
 	var throttle_height := available_height * (0.66 if portrait else 0.82)
 	throttle_panel.custom_minimum_size = Vector2(throttle_width, throttle_height)
-	throttle_panel.position = Vector2(0.0, -throttle_height * 0.5)
+	throttle_panel.anchor_left = 0.0
+	throttle_panel.anchor_top = 0.5
+	throttle_panel.anchor_right = 0.0
+	throttle_panel.anchor_bottom = 0.5
+	throttle_panel.offset_left = 0.0
+	throttle_panel.offset_top = -throttle_height * 0.5
+	throttle_panel.offset_right = throttle_width
+	throttle_panel.offset_bottom = throttle_height * 0.5
 	speed_slider.custom_minimum_size = Vector2(64.0 * ui_scale, 180.0 * ui_scale)
 
 	var info_width := clampf(

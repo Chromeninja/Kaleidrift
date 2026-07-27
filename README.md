@@ -79,7 +79,7 @@ The Android MVP is intended to deliver:
 The current prototype uses:
 
 - **Drag anywhere outside the panels:** Horizontal and unlimited vertical steering
-- **Large left-side throttle:** Forward speed
+- **Large centered throttle:** Forward speed
 - **H:** Hide the HUD on desktop
 - **Escape / Android Back:** Restore the HUD after it is hidden
 - **R:** Reset the flight on desktop
