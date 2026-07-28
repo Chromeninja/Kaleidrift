@@ -765,7 +765,7 @@ func _reset_controller_settings() -> void:
 
 
 func _update_controller_ui() -> void:
-	if not is_instance_valid(controller_deadzone_label):
+	if not is_instance_valid(controller_deadzone_label) or not is_instance_valid(controller_calibration_label):
 		return
 	controller_deadzone_label.text = "Stick deadzone  %d%%" % roundi(_controller_deadzone_setting * 100.0)
 	if flight_input.active_joypad_id >= 0:
@@ -792,9 +792,10 @@ func _record_controller_diagnostic(message: String) -> void:
 	_controller_diagnostics.append(entry)
 	if _controller_diagnostics.size() > 80:
 		_controller_diagnostics.pop_front()
-	var log_file := FileAccess.open(CONTROLLER_LOG_PATH, FileAccess.WRITE)
+	var log_file := FileAccess.open(CONTROLLER_LOG_PATH, FileAccess.WRITE_READ)
 	if log_file != null:
-		log_file.store_string("\n".join(_controller_diagnostics) + "\n")
+		log_file.seek_end()
+		log_file.store_string(entry + "\n")
 
 
 func _make_hdr_slider(minimum: float, maximum: float, step: float, value: float, label_text: String) -> HSlider:
@@ -1195,7 +1196,7 @@ func _start_survival() -> void:
 	# from the spawn position as well, so collision does not switch worlds on the
 	# first frame and strand the player inside a wall.
 	var active_level := _get_survival_fractal_level(Vector3(0.0, 0.0, 2.0))
-	for _settle_attempt in 2:
+	for _settle_attempt in range(2):
 		survival_session.start(active_level, int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
 		var spawn_level := _get_survival_fractal_level(survival_session.position)
 		if spawn_level == active_level:

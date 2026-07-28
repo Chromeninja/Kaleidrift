@@ -54,7 +54,7 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 			fposmod(point.z + 4.0, 8.0) - 4.0
 		)
 		var scale := 1.0
-		for _iteration in iterations:
+		for _iteration in range(iterations):
 			p = p.clamp(Vector3(-1.0, -1.0, -1.0), Vector3.ONE) * 2.0 - p
 			var radius_squared := p.length_squared()
 			var fold_scale := clampf(maxf(0.25, 1.0 / maxf(radius_squared, 0.25)), 0.25, 1.0)
@@ -67,7 +67,7 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 		var p := Vector3(fposmod(point.x + 4.0, 8.0) - 4.0, fposmod(point.y + 4.0, 8.0) - 4.0, fposmod(point.z + 4.0, 8.0) - 4.0)
 		var value := 1.0
 		var scale := 1.0
-		for _iteration in 6:
+		for _iteration in range(iterations):
 			p = p.abs()
 			if p.x < p.y:
 				var xy := p.x
@@ -88,7 +88,7 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 			fposmod(point.z + 4.0, 8.0) - 4.0
 		)) * 0.82
 		var k_scale := 1.0
-		for _iteration in 6:
+		for _iteration in range(iterations):
 			k = k.abs()
 			if k.x < k.y:
 				var ky := k.x
@@ -115,7 +115,7 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 		var z := tiled_point * 0.72
 		var radius := 0.0
 		var derivative := 1.0
-		for _iteration in 6:
+		for _iteration in range(iterations):
 			radius = z.length()
 			if radius > 2.4: break
 			var theta := asin(clampf(z.z / maxf(radius, 0.001), -1.0, 1.0))
@@ -184,7 +184,7 @@ func find_safest_direction(
 		Vector3.DOWN,
 	]
 	var golden_angle := PI * (3.0 - sqrt(5.0))
-	for sample_index in 42:
+	for sample_index in range(42):
 		var y := 1.0 - 2.0 * (float(sample_index) + 0.5) / 42.0
 		var radial := sqrt(maxf(1.0 - y * y, 0.0))
 		var angle := golden_angle * float(sample_index)
@@ -226,7 +226,7 @@ func collides_with_world_swept_sphere(
 	current_position: Vector3,
 	player_radius: float
 ) -> bool:
-	for sample_index in WALL_SWEEP_SAMPLES + 1:
+	for sample_index in range(WALL_SWEEP_SAMPLES + 1):
 		var amount := float(sample_index) / float(WALL_SWEEP_SAMPLES)
 		var sample_position := previous_position.lerp(current_position, amount)
 		if get_world_sdf(sample_position) < player_radius:
@@ -241,7 +241,7 @@ func get_shader_obstacles(player_position: Vector3) -> Array[Vector4]:
 			return a.position.distance_squared_to(player_position) < b.position.distance_squared_to(player_position)
 	)
 	var packed: Array[Vector4] = []
-	for index in MAX_RENDER_OBSTACLES:
+	for index in range(MAX_RENDER_OBSTACLES):
 		if index < candidates.size():
 			var obstacle: CourseObstacle = candidates[index]
 			packed.append(Vector4(
@@ -312,7 +312,7 @@ func _spawn_cell_obstacle(cell: Vector3i) -> void:
 	var radius := rng.randf_range(0.48, 0.82)
 	var cell_origin := Vector3(cell) * CELL_SIZE
 	var identifier := "%d:%d:%d" % [cell.x, cell.y, cell.z]
-	for _attempt in 6:
+	for _attempt in range(6):
 		var candidate := cell_origin + Vector3(
 			rng.randf_range(1.2, CELL_SIZE - 1.2),
 			rng.randf_range(1.2, CELL_SIZE - 1.2),

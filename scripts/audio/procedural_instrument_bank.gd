@@ -39,7 +39,7 @@ func _make_stream(duration: float, sample_function: Callable) -> AudioStreamWAV:
 	var frame_count := ceili(duration * MIX_RATE)
 	var pcm := PackedByteArray()
 	pcm.resize(frame_count * 2)
-	for frame in frame_count:
+	for frame in range(frame_count):
 		var time := float(frame) / float(MIX_RATE)
 		var phase := time * TAU * 220.0
 		var value: float = clampf(sample_function.call(time, duration, phase), -0.92, 0.92)

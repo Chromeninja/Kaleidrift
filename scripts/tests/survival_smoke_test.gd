@@ -38,7 +38,7 @@ func _test_open_world_has_free_space_and_solids() -> void:
 	var safe_direction: Vector3 = world.find_safest_direction(safe_spawn, 0.22)
 	assert(is_equal_approx(safe_direction.length(), 1.0))
 	var path_position := safe_spawn
-	for _step in 20:
+	for _step in range(20):
 		var next_position := path_position + safe_direction * 0.1
 		assert(not world.collides_with_world_swept_sphere(
 			path_position,
@@ -72,7 +72,7 @@ func _test_open_world_has_free_space_and_solids() -> void:
 	for direction in directions:
 		var probe := safe_spawn
 		var moved_through_open_space := false
-		for _step in 20:
+		for _step in range(20):
 			var next_probe: Vector3 = probe + direction * 0.08
 			if world.collides_with_world_swept_sphere(probe, next_probe, 0.22):
 				break
@@ -147,7 +147,7 @@ func _test_health_invulnerability() -> void:
 
 func _assert_obstacles_match(first: Array, second: Array) -> void:
 	assert(first.size() == second.size())
-	for index in first.size():
+	for index in range(first.size()):
 		assert(first[index].identifier == second[index].identifier)
 		assert(first[index].position.is_equal_approx(second[index].position))
 		assert(is_equal_approx(first[index].radius, second[index].radius))

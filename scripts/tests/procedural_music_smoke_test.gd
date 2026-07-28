@@ -36,7 +36,7 @@ func _test_composition_is_deterministic() -> void:
 	assert(first.root_midi == second.root_midi)
 	assert(first.scale == second.scale)
 	assert(first.chord_notes() == second.chord_notes())
-	for _step in 32:
+	for _step in range(32):
 		assert(first.next_melody_note() == second.next_melody_note())
 	first.advance_chord()
 	second.advance_chord()

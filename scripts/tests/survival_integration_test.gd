@@ -15,7 +15,7 @@ func _run() -> void:
 	assert(is_instance_valid(main_scene.music_volume_slider))
 	main_scene._start_survival()
 	assert(main_scene.survival_session.health.invulnerability_remaining > 4.8)
-	for _frame in 10:
+	for _frame in range(10):
 		await physics_frame
 		await process_frame
 
@@ -34,7 +34,7 @@ func _run() -> void:
 	var orientation_before_turn: Quaternion = main_scene.camera_orientation
 	main_scene._apply_steering_delta(Vector2(180.0, -110.0))
 	assert(not main_scene.camera_orientation.is_equal_approx(orientation_before_turn))
-	for _frame in 8:
+	for _frame in range(8):
 		await physics_frame
 		await process_frame
 	var position_after_turn: Vector3 = main_scene.survival_session.position
@@ -46,7 +46,7 @@ func _run() -> void:
 	main_scene.selected_fractal_level = FractalLevelsScript.Type.MIXED
 	main_scene._start_survival()
 	var mixed_spawn_position: Vector3 = main_scene.survival_session.position
-	for _frame in 10:
+	for _frame in range(10):
 		await physics_frame
 		await process_frame
 	assert(main_scene.survival_session.position.distance_to(mixed_spawn_position) > 0.05)
