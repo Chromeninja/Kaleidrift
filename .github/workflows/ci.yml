@@ -18,6 +18,8 @@ jobs:
           version: 4.7.1
           include-templates: true
           use-dotnet: false
+      - name: Import project and register script classes
+        run: godot --headless --editor --path . --quit-after 5
       - name: Parse and start project
         run: godot --headless --rendering-method gl_compatibility --path . --quit-after 1
       - name: Run deterministic and integration tests
@@ -37,8 +39,11 @@ jobs:
           version: 4.7.1
           include-templates: true
           use-dotnet: false
+      - name: Import project and register script classes
+        run: godot --headless --editor --path . --quit-after 5
       - name: Export Web and Windows
         run: |
+          mkdir -p build/web build/windows
           godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
           godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
       - name: Validate exported files

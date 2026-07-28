@@ -17,12 +17,15 @@ jobs:
           version: 4.7.1
           include-templates: true
           use-dotnet: false
+      - name: Import project and register script classes
+        run: godot --headless --editor --path . --quit-after 5
       - name: Run smoke tests
         run: |
           godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
           godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
       - name: Build Windows release
         run: |
+          mkdir -p build/windows
           godot --headless --path . --export-release "Windows Desktop" build/windows/Kaleidrift.exe
           cd build/windows && zip -r Kaleidrift-windows.zip Kaleidrift.exe Kaleidrift.pck
       - name: Create GitHub release

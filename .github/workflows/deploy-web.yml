@@ -24,10 +24,14 @@ jobs:
           version: 4.7.1
           include-templates: true
           use-dotnet: false
+      - name: Import project and register script classes
+        run: godot --headless --editor --path . --quit-after 5
       - name: Validate project startup
         run: godot --headless --rendering-method gl_compatibility --path . --quit-after 1
       - name: Export single-threaded Web build
-        run: godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
+        run: |
+          mkdir -p build/web
+          godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
       - name: Validate Web artifact
         run: |
           test -f build/web/index.html
