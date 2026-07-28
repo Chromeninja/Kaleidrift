@@ -5,6 +5,7 @@ const TARGET_FRAME_MS := 1000.0 / 60.0
 const AUTO_EVALUATION_SECONDS := 2.0
 const AUTO_UPGRADE_SECONDS := 8.0
 const SETTINGS_PATH := "user://settings.cfg"
+const CONTROLLER_LOG_PATH := "user://controller_input.log"
 const SETTINGS_SECTION := "settings"
 const HDR_MODE_AUTO := 0
 const HDR_MODE_ON := 1
@@ -63,6 +64,12 @@ var reduced_motion_toggle: CheckButton
 var music_toggle: CheckButton
 var music_volume_slider: HSlider
 var music_volume_label: Label
+var controller_deadzone_slider: HSlider
+var controller_deadzone_label: Label
+var controller_calibration_label: Label
+var controller_calibrate_button: Button
+var controller_reset_button: Button
+var controller_diagnostics_label: Label
 var hdr_mode_selector: OptionButton
 var hdr_status_label: Label
 var reference_white_slider: HSlider
@@ -115,7 +122,13 @@ var output_max_linear_value := 1.0
 var _reduced_motion_setting := false
 var _music_enabled_setting := true
 var _music_volume_setting := 0.7
+var _controller_deadzone_setting := FlightInputAdapterScript.DEFAULT_DEADZONE
+var _controller_outer_deadzone_setting := FlightInputAdapterScript.DEFAULT_OUTER_DEADZONE
+var _controller_response_curve_setting := FlightInputAdapterScript.DEFAULT_RESPONSE_CURVE
 var _music_started := false
+var _last_steering_source := "none"
+var _controller_diagnostics: Array[String] = []
+var _last_controller_log_time_ms := 0
 var survival_session
 var music_controller: ProceduralMusicController
 var damage_flash_strength := 0.0
@@ -125,6 +138,9 @@ func _ready() -> void:
 	current_quality = PlatformCapabilities.default_quality()
 	flight_input = FlightInputAdapterScript.new()
 	_load_settings()
+	flight_input.deadzone = _controller_deadzone_setting
+	flight_input.outer_deadzone = _controller_outer_deadzone_setting
+	flight_input.response_curve = _controller_response_curve_setting
 	survival_session = SurvivalSessionScript.new()
 	survival_session.name = "SurvivalSession"
 	add_child(survival_session)
@@ -150,11 +166,15 @@ func _ready() -> void:
 		music_toggle.button_pressed = _music_enabled_setting
 	if is_instance_valid(music_volume_slider):
 		music_volume_slider.value = _music_volume_setting * 100.0
+	if is_instance_valid(controller_deadzone_slider):
+		controller_deadzone_slider.value = _controller_deadzone_setting
+	_update_controller_ui()
 	if is_instance_valid(fractal_selector):
 		fractal_selector.select(selected_fractal_level)
 		fractal_description.text = FractalLevelsScript.description(selected_fractal_level)
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
 	get_window().output_max_linear_value_changed.connect(_on_output_max_linear_value_changed)
+	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	status_label.text = "Drag anywhere to steer • Throttle centered below"
 
 
@@ -176,7 +196,11 @@ func _process(delta: float) -> void:
 	if interface_state == InterfaceState.PLAYING:
 		var keyboard_steering := flight_input.keyboard_delta(delta)
 		if keyboard_steering != Vector2.ZERO:
+			_record_controller_diagnostic("keyboard steering applied")
+			_last_steering_source = "keyboard"
 			_apply_steering_delta(keyboard_steering)
+	if settings_visible:
+		_update_controller_ui()
 	elapsed += delta
 	var basis := Basis(camera_orientation).orthonormalized()
 	var forward := -basis.z.normalized()
@@ -240,8 +264,17 @@ func _input(event: InputEvent) -> void:
 	# Ignoring events in menus also prevents a play-button transition from leaving
 	# a stale drag stream attached to the camera.
 	if interface_state == InterfaceState.PLAYING:
+		if event is InputEventJoypadMotion:
+			var joypad_delta := flight_input.joypad_delta(event, get_process_delta_time())
+			_record_controller_diagnostic(flight_input.last_joypad_diagnostic)
+			if joypad_delta != Vector2.ZERO:
+				_last_steering_source = "joypad %d" % event.device
+				_apply_steering_delta(joypad_delta)
+			return
 		var steering_delta := flight_input.consume(event, _is_over_hud_control)
 		if steering_delta != Vector2.ZERO:
+			_last_steering_source = "pointer"
+			_record_controller_diagnostic("pointer steering applied")
 			_apply_steering_delta(steering_delta)
 
 
@@ -483,6 +516,39 @@ func _build_menu_panel(parent: Control) -> void:
 	music_volume_slider.value = _music_volume_setting * 100.0
 	music_volume_slider.value_changed.connect(_on_music_volume_changed)
 	settings_content.add_child(music_volume_slider)
+	var controller_divider := HSeparator.new()
+	settings_content.add_child(controller_divider)
+	var controller_title := Label.new()
+	controller_title.text = "CONTROLLER INPUT"
+	controller_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	controller_title.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
+	settings_content.add_child(controller_title)
+	controller_deadzone_label = Label.new()
+	controller_deadzone_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	settings_content.add_child(controller_deadzone_label)
+	controller_deadzone_slider = HSlider.new()
+	controller_deadzone_slider.min_value = 0.05
+	controller_deadzone_slider.max_value = 0.60
+	controller_deadzone_slider.step = 0.01
+	controller_deadzone_slider.value = _controller_deadzone_setting
+	controller_deadzone_slider.value_changed.connect(_on_controller_deadzone_changed)
+	settings_content.add_child(controller_deadzone_slider)
+	controller_calibration_label = Label.new()
+	controller_calibration_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	controller_calibration_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	settings_content.add_child(controller_calibration_label)
+	controller_calibrate_button = Button.new()
+	controller_calibrate_button.text = "Calibrate neutral stick"
+	controller_calibrate_button.pressed.connect(_calibrate_controller)
+	settings_content.add_child(controller_calibrate_button)
+	controller_reset_button = Button.new()
+	controller_reset_button.text = "Reset controller settings"
+	controller_reset_button.pressed.connect(_reset_controller_settings)
+	settings_content.add_child(controller_reset_button)
+	controller_diagnostics_label = Label.new()
+	controller_diagnostics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	controller_diagnostics_label.add_theme_color_override("font_color", Color(0.67, 0.83, 0.94))
+	settings_content.add_child(controller_diagnostics_label)
 	var hdr_divider := HSeparator.new()
 	settings_content.add_child(hdr_divider)
 	var hdr_title := Label.new()
@@ -661,6 +727,73 @@ func _on_music_volume_changed(value: float) -> void:
 	if is_instance_valid(music_controller):
 		music_controller.set_volume_linear(_music_volume_setting)
 	_save_settings()
+
+
+func _on_controller_deadzone_changed(value: float) -> void:
+	_controller_deadzone_setting = clampf(value, 0.05, 0.60)
+	flight_input.deadzone = _controller_deadzone_setting
+	_update_controller_ui()
+	_save_settings()
+
+
+func _on_joy_connection_changed(device_id: int, connected: bool) -> void:
+	if not connected:
+		flight_input.reset_joypad(device_id)
+	_update_controller_ui()
+
+
+func _calibrate_controller() -> void:
+	if not flight_input.calibrate_active_joypad():
+		controller_calibration_label.text = "Move a stick, release it, then press calibrate again."
+		return
+	controller_calibration_label.text = "Neutral calibrated for controller %d" % flight_input.active_joypad_id
+	_save_settings()
+
+
+func _reset_controller_settings() -> void:
+	_controller_deadzone_setting = FlightInputAdapterScript.DEFAULT_DEADZONE
+	_controller_outer_deadzone_setting = FlightInputAdapterScript.DEFAULT_OUTER_DEADZONE
+	_controller_response_curve_setting = FlightInputAdapterScript.DEFAULT_RESPONSE_CURVE
+	flight_input.reset_defaults()
+	flight_input.deadzone = _controller_deadzone_setting
+	flight_input.outer_deadzone = _controller_outer_deadzone_setting
+	flight_input.response_curve = _controller_response_curve_setting
+	controller_deadzone_slider.value = _controller_deadzone_setting
+	_update_controller_ui()
+	_save_settings()
+
+
+func _update_controller_ui() -> void:
+	if not is_instance_valid(controller_deadzone_label):
+		return
+	controller_deadzone_label.text = "Stick deadzone  %d%%" % roundi(_controller_deadzone_setting * 100.0)
+	if flight_input.active_joypad_id >= 0:
+		controller_calibration_label.text = "Controller %d ready • release sticks before calibration" % flight_input.active_joypad_id
+	else:
+		controller_calibration_label.text = "Move the preferred stick firmly to select it for this flight"
+	if is_instance_valid(controller_diagnostics_label):
+		var device_lines: Array[String] = []
+		for device_id in Input.get_connected_joypads():
+			var axes: Vector2 = flight_input.joypad_axis_values.get(str(device_id), Vector2.ZERO)
+			device_lines.append("%d %s  X %.3f  Y %.3f" % [device_id, Input.get_joy_name(device_id), axes.x, axes.y])
+		var device_summary := "No controllers connected" if device_lines.is_empty() else "\n".join(device_lines)
+		controller_diagnostics_label.text = "Diagnostics\nActive: %s • Last source: %s\n%s\nLog: %s" % [str(flight_input.active_joypad_id), _last_steering_source, device_summary, CONTROLLER_LOG_PATH]
+
+
+func _record_controller_diagnostic(message: String) -> void:
+	if message.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_controller_log_time_ms < 100 and "claimed" not in message:
+		return
+	_last_controller_log_time_ms = now
+	var entry := "%d %s" % [now, message]
+	_controller_diagnostics.append(entry)
+	if _controller_diagnostics.size() > 80:
+		_controller_diagnostics.pop_front()
+	var log_file := FileAccess.open(CONTROLLER_LOG_PATH, FileAccess.WRITE)
+	if log_file != null:
+		log_file.store_string("\n".join(_controller_diagnostics) + "\n")
 
 
 func _make_hdr_slider(minimum: float, maximum: float, step: float, value: float, label_text: String) -> HSlider:
@@ -985,6 +1118,12 @@ func _load_settings() -> void:
 	peak_brightness_limit = clampf(float(config.get_value(SETTINGS_SECTION, "peak_brightness_limit", 4.0)), 1.0, 20.0)
 	highlight_intensity = clampf(float(config.get_value(SETTINGS_SECTION, "highlight_intensity", 1.0)), 0.25, 3.0)
 	gamut_intensity = clampf(float(config.get_value(SETTINGS_SECTION, "gamut_intensity", 1.0)), 0.0, 1.5)
+	_controller_deadzone_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_deadzone", FlightInputAdapterScript.DEFAULT_DEADZONE)), 0.05, 0.60)
+	_controller_outer_deadzone_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_outer_deadzone", FlightInputAdapterScript.DEFAULT_OUTER_DEADZONE)), 0.0, 0.25)
+	_controller_response_curve_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_response_curve", FlightInputAdapterScript.DEFAULT_RESPONSE_CURVE)), 0.5, 2.0)
+	var saved_calibration = config.get_value(SETTINGS_SECTION, "controller_calibration", {})
+	if saved_calibration is Dictionary:
+		flight_input.calibration_offsets = saved_calibration
 
 
 func _save_settings() -> void:
@@ -1001,6 +1140,10 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "reduced_motion", reduced_motion_toggle.button_pressed if is_instance_valid(reduced_motion_toggle) else false)
 	config.set_value(SETTINGS_SECTION, "music_enabled", _music_enabled_setting)
 	config.set_value(SETTINGS_SECTION, "music_volume", _music_volume_setting)
+	config.set_value(SETTINGS_SECTION, "controller_deadzone", _controller_deadzone_setting)
+	config.set_value(SETTINGS_SECTION, "controller_outer_deadzone", _controller_outer_deadzone_setting)
+	config.set_value(SETTINGS_SECTION, "controller_response_curve", _controller_response_curve_setting)
+	config.set_value(SETTINGS_SECTION, "controller_calibration", flight_input.calibration_offsets if is_instance_valid(flight_input) else {})
 	config.save(SETTINGS_PATH)
 
 
