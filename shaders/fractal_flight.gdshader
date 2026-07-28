@@ -149,7 +149,10 @@ float gyroid_sdf(vec3 point) {
 }
 
 float survival_world_sdf(vec3 point) {
-	float structure = gyroid_sdf(point);
+	// Survival must use the selected fractal too. Keeping this as gyroid_sdf()
+	// made every non-Fold selection look like Kalei Fold.
+	float folded = fractal_sdf(point);
+	float structure = fractal_type != 0 ? folded : min(gyroid_sdf(point), folded);
 	float obstacle_distance = 10000.0;
 	for (int obstacle_index = 0; obstacle_index < 8; obstacle_index++) {
 		vec4 obstacle = survival_obstacles[obstacle_index];

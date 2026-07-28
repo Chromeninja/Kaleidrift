@@ -46,6 +46,22 @@ func update(player_position: Vector3) -> void:
 
 
 static func get_fractal_sdf(point: Vector3, level: int) -> float:
+	if level == FractalLevelsScript.Type.MANDELBOX:
+		var p := Vector3(
+			fposmod(point.x + 4.0, 8.0) - 4.0,
+			fposmod(point.y + 4.0, 8.0) - 4.0,
+			fposmod(point.z + 4.0, 8.0) - 4.0
+		)
+		var scale := 1.0
+		for _iteration in 6:
+			p = p.clamp(Vector3(-1.0, -1.0, -1.0), Vector3.ONE) * 2.0 - p
+			var radius_squared := p.length_squared()
+			var fold_scale := clampf(maxf(0.25, 1.0 / maxf(radius_squared, 0.25)), 0.25, 1.0)
+			p *= fold_scale
+			scale *= fold_scale
+			p = p * 1.42 + Vector3(0.08, -0.04, 0.03)
+			scale *= 1.42
+		return (p.length() - 1.0) / maxf(absf(scale), 0.001) * 0.62
 	if level == FractalLevelsScript.Type.MENGER:
 		var p := Vector3(fposmod(point.x + 4.0, 8.0) - 4.0, fposmod(point.y + 4.0, 8.0) - 4.0, fposmod(point.z + 4.0, 8.0) - 4.0)
 		var value := 1.0
@@ -83,7 +99,12 @@ static func get_fractal_sdf(point: Vector3, level: int) -> float:
 				k.z = kz
 			k = k * 2.0 - Vector3(1.12, 1.04, 0.96)
 			k_scale *= 2.0
-		return (maxf(k.abs().x - 0.32, 0.0) + maxf(k.abs().y - 0.32, 0.0) + maxf(k.abs().z - 0.32, 0.0)) / k_scale - 0.035
+		var exterior := Vector3(
+			maxf(k.abs().x - 0.32, 0.0),
+			maxf(k.abs().y - 0.32, 0.0),
+			maxf(k.abs().z - 0.32, 0.0)
+		)
+		return (exterior.length() + minf(maxf(k.x, maxf(k.y, k.z)), 0.0)) / k_scale - 0.035
 	if level == FractalLevelsScript.Type.MANDELBULB:
 		var tiled_point := Vector3(
 			fposmod(point.x + 4.0, 8.0) - 4.0,
@@ -108,15 +129,14 @@ static func get_fractal_sdf(point: Vector3, level: int) -> float:
 	return 0.0
 
 static func get_base_world_sdf(point: Vector3, level: int = FractalLevelsScript.Type.FOLD) -> float:
+	if level != FractalLevelsScript.Type.FOLD:
+		return get_fractal_sdf(point, level)
 	var region_wave := sin(point.x * 0.060) * 0.18 + cos(point.z * 0.052) * 0.16
 	var gyroid := absf(
 		sin(point.x * 0.58) * cos(point.y * 0.58)
 		+ sin(point.y * 0.58) * cos(point.z * 0.58)
 		+ sin(point.z * 0.58) * cos(point.x * 0.58)
 	) / 0.58 - (0.44 + region_wave)
-	# Survival renders and collides against the gyroid corridor only. Keep its
-	# spawn checks aligned with that shader path regardless of the selected
-	# Endless fractal presentation.
 	return gyroid
 
 func get_world_sdf(point: Vector3) -> float:
