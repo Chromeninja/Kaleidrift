@@ -166,9 +166,10 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
-	var keyboard_steering := flight_input.keyboard_delta(delta)
-	if keyboard_steering != Vector2.ZERO:
-		_apply_steering_delta(keyboard_steering)
+	if interface_state == InterfaceState.PLAYING:
+		var keyboard_steering := flight_input.keyboard_delta(delta)
+		if keyboard_steering != Vector2.ZERO:
+			_apply_steering_delta(keyboard_steering)
 	elapsed += delta
 	var basis := Basis(camera_orientation).orthonormalized()
 	var forward := -basis.z.normalized()
@@ -223,9 +224,13 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("reset_flight"):
 		_reset_flight()
 		return
-	var steering_delta := flight_input.consume(event, _is_over_hud_control)
-	if steering_delta != Vector2.ZERO:
-		_apply_steering_delta(steering_delta)
+	# Pointer/touch steering is valid only after a mode has entered active flight.
+	# Ignoring events in menus also prevents a play-button transition from leaving
+	# a stale drag stream attached to the camera.
+	if interface_state == InterfaceState.PLAYING:
+		var steering_delta := flight_input.consume(event, _is_over_hud_control)
+		if steering_delta != Vector2.ZERO:
+			_apply_steering_delta(steering_delta)
 
 
 func _build_render_pipeline() -> void:
@@ -1019,7 +1024,7 @@ func _start_playing() -> void:
 	interface_state = InterfaceState.PLAYING
 	settings_visible = false
 	safe_root.visible = true
-	throttle_panel.visible = true
+	throttle_panel.visible = false
 	menu_panel.visible = false
 	gameplay_overlay.visible = current_game_mode == GameMode.SURVIVAL
 	flight_input.reset()
