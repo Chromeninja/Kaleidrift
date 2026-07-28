@@ -16,13 +16,14 @@ const SurvivalSessionScript := preload("res://scripts/gameplay/survival_session.
 const ProceduralMusicControllerScript := preload("res://scripts/audio/procedural_music_controller.gd")
 const PlatformCapabilitiesScript := preload("res://scripts/platform/platform_capabilities.gd")
 const FlightInputAdapterScript := preload("res://scripts/input/flight_input_adapter.gd")
+const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
 const WEB_DEFAULT_QUALITY := 0
 const QUALITY_PRESETS := [
-	{"name": "Low", "render_scale": 0.45, "steps": 44, "detail": 3, "distance": 46.0},
-	{"name": "Medium", "render_scale": 0.64, "steps": 64, "detail": 4, "distance": 62.0},
-	{"name": "High", "render_scale": 1.0, "steps": 84, "detail": 5, "distance": 78.0}
+	{"name": "Low", "render_scale": 0.45, "steps": 44, "detail": 3, "fractal_iterations": 4, "distance": 46.0},
+	{"name": "Medium", "render_scale": 0.64, "steps": 64, "detail": 4, "fractal_iterations": 6, "distance": 62.0},
+	{"name": "High", "render_scale": 1.0, "steps": 84, "detail": 5, "fractal_iterations": 8, "distance": 78.0}
 ]
 
 enum InterfaceState {
@@ -56,6 +57,8 @@ var speed_slider: VSlider
 var speed_readout: Label
 var quality_label: Label
 var quality_selector: OptionButton
+var fractal_selector: OptionButton
+var fractal_description: Label
 var reduced_motion_toggle: CheckButton
 var music_toggle: CheckButton
 var music_volume_slider: HSlider
@@ -98,6 +101,7 @@ var frame_ms_samples: Array[float] = []
 var flight_input: FlightInputAdapter
 var interface_state := InterfaceState.MENU
 var current_game_mode := GameMode.ENDLESS
+var selected_fractal_level := FractalLevelsScript.Type.FOLD
 var settings_visible := false
 var hdr_mode := HDR_MODE_AUTO
 var tone_map_mode := TONE_MAP_REINHARD
@@ -146,6 +150,9 @@ func _ready() -> void:
 		music_toggle.button_pressed = _music_enabled_setting
 	if is_instance_valid(music_volume_slider):
 		music_volume_slider.value = _music_volume_setting * 100.0
+	if is_instance_valid(fractal_selector):
+		fractal_selector.select(selected_fractal_level)
+		fractal_description.text = FractalLevelsScript.description(selected_fractal_level)
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
 	get_window().output_max_linear_value_changed.connect(_on_output_max_linear_value_changed)
 	status_label.text = "Drag anywhere to steer • Throttle centered below"
@@ -182,6 +189,11 @@ func _process(delta: float) -> void:
 	shader_material.set_shader_parameter("camera_right", right)
 	shader_material.set_shader_parameter("camera_up", up)
 	shader_material.set_shader_parameter("elapsed_time", elapsed)
+	var fractal_info := FractalLevelsScript.region_info(selected_fractal_level, camera_position.z, MUSIC_JOURNEY_SEED)
+	shader_material.set_shader_parameter("fractal_type", int(fractal_info["active"]))
+	shader_material.set_shader_parameter("fractal_iterations", int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
+	if current_game_mode == GameMode.SURVIVAL and is_instance_valid(survival_session):
+		survival_session.set_fractal_level(int(fractal_info["active"]))
 	shader_material.set_shader_parameter("survival_mode", current_game_mode == GameMode.SURVIVAL)
 	if current_game_mode == GameMode.SURVIVAL:
 		shader_material.set_shader_parameter(
@@ -362,6 +374,21 @@ func _build_menu_panel(parent: Control) -> void:
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_color_override("font_color", Color(0.55, 0.78, 0.94))
 	main_menu_content.add_child(subtitle)
+	var fractal_title := Label.new()
+	fractal_title.text = "FLIGHT WORLD"
+	fractal_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fractal_title.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
+	main_menu_content.add_child(fractal_title)
+	fractal_selector = OptionButton.new()
+	for level in range(FractalLevelsScript.Type.MIXED + 1):
+		fractal_selector.add_item(FractalLevelsScript.display_name(level), level)
+	fractal_selector.item_selected.connect(_on_fractal_selected)
+	main_menu_content.add_child(fractal_selector)
+	fractal_description = Label.new()
+	fractal_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fractal_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	fractal_description.add_theme_color_override("font_color", Color(0.68, 0.84, 0.95))
+	main_menu_content.add_child(fractal_description)
 	var endless_description := Label.new()
 	endless_description.text = "ENDLESS\nRelax, explore, and pass through the shifting world."
 	endless_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -603,6 +630,12 @@ func _on_quality_selected(index: int) -> void:
 	automatic_quality = index == 0
 	current_quality = 1 if automatic_quality else clamp(index - 1, 0, QUALITY_PRESETS.size() - 1)
 	_apply_quality(current_quality)
+	_save_settings()
+
+func _on_fractal_selected(index: int) -> void:
+	selected_fractal_level = clampi(index, FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED)
+	if is_instance_valid(fractal_description):
+		fractal_description.text = FractalLevelsScript.description(selected_fractal_level)
 	_save_settings()
 
 
@@ -942,6 +975,7 @@ func _load_settings() -> void:
 		return
 	hdr_mode = clampi(int(config.get_value(SETTINGS_SECTION, "hdr_mode", HDR_MODE_AUTO)), HDR_MODE_AUTO, HDR_MODE_OFF)
 	current_quality = clampi(int(config.get_value(SETTINGS_SECTION, "quality", current_quality)), 0, QUALITY_PRESETS.size() - 1)
+	selected_fractal_level = clampi(int(config.get_value(SETTINGS_SECTION, "fractal_level", FractalLevelsScript.Type.FOLD)), FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED)
 	automatic_quality = bool(config.get_value(SETTINGS_SECTION, "automatic_quality", automatic_quality))
 	_reduced_motion_setting = bool(config.get_value(SETTINGS_SECTION, "reduced_motion", false))
 	_music_enabled_setting = bool(config.get_value(SETTINGS_SECTION, "music_enabled", true))
@@ -962,6 +996,7 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "highlight_intensity", highlight_intensity)
 	config.set_value(SETTINGS_SECTION, "gamut_intensity", gamut_intensity)
 	config.set_value(SETTINGS_SECTION, "quality", current_quality)
+	config.set_value(SETTINGS_SECTION, "fractal_level", selected_fractal_level)
 	config.set_value(SETTINGS_SECTION, "automatic_quality", automatic_quality)
 	config.set_value(SETTINGS_SECTION, "reduced_motion", reduced_motion_toggle.button_pressed if is_instance_valid(reduced_motion_toggle) else false)
 	config.set_value(SETTINGS_SECTION, "music_enabled", _music_enabled_setting)
@@ -1000,8 +1035,10 @@ func _update_metrics(latest_frame_ms: float) -> void:
 func _start_endless() -> void:
 	current_game_mode = GameMode.ENDLESS
 	survival_session.stop()
-	_reset_endless_flight()
 	speed_slider.min_value = 0.25
+	speed = clampf(speed, speed_slider.min_value, speed_slider.max_value)
+	speed_slider.value = speed
+	_reset_endless_flight()
 	_start_playing()
 
 
@@ -1010,7 +1047,8 @@ func _start_survival() -> void:
 	speed_slider.min_value = 1.5
 	speed = maxf(speed, speed_slider.min_value)
 	speed_slider.value = speed
-	survival_session.start()
+	var active_level := FractalLevelsScript.for_region(selected_fractal_level, 0, MUSIC_JOURNEY_SEED)
+	survival_session.start(active_level)
 	var spawn_forward: Vector3 = survival_session.get_spawn_forward().normalized()
 	var spawn_up := Vector3.UP
 	if absf(spawn_forward.dot(spawn_up)) > 0.999:
@@ -1072,9 +1110,6 @@ func _reset_flight() -> void:
 func _reset_endless_flight() -> void:
 	camera_position = Vector3(0.0, 0.0, 2.0)
 	camera_orientation = Quaternion.IDENTITY
-	speed = 2.5
-	if is_instance_valid(speed_slider):
-		speed_slider.value = speed
 
 
 func _update_music_context() -> void:

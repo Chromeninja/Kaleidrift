@@ -3,6 +3,7 @@ extends RefCounted
 
 ## Normalizes pointer, touch, keyboard, controller, and future sensor inputs.
 const POINTER_DEADZONE := 0.5
+const AXIS_DEADZONE := 0.24
 var steering_touch_id := -1
 var steering_mouse_active := false
 
@@ -26,10 +27,10 @@ func consume(event: InputEvent, is_over_hud_control: Callable) -> Vector2:
 
 
 func keyboard_delta(delta: float) -> Vector2:
-	var horizontal := Input.get_axis("ui_left", "ui_right")
-	var vertical := Input.get_axis("ui_up", "ui_down")
+	var horizontal := Input.get_action_strength("ui_right") - Input.get_action_strength("ui_left")
+	var vertical := Input.get_action_strength("ui_down") - Input.get_action_strength("ui_up")
 	var steering := Vector2(horizontal, vertical)
-	if steering.length_squared() < 0.01:
+	if not steering.is_finite() or steering.length_squared() <= AXIS_DEADZONE * AXIS_DEADZONE:
 		return Vector2.ZERO
 	return steering * 480.0 * delta
 

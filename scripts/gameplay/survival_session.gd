@@ -1,6 +1,8 @@
 class_name SurvivalSession
 extends Node
 
+const FractalLevelsScript = preload("res://scripts/fractal_levels.gd")
+
 signal health_changed(current: int, maximum: int)
 signal damaged
 signal game_over(distance: float, score: int)
@@ -23,6 +25,7 @@ var distance_traveled := 0.0
 var score := 0
 var recovery_remaining := 0.0
 var active := false
+var fractal_level := FractalLevelsScript.Type.FOLD
 
 
 func _ready() -> void:
@@ -37,15 +40,17 @@ func _ready() -> void:
 	health.depleted.connect(_on_health_depleted)
 
 
-func start() -> void:
-	position = SurvivalWorld.find_safe_spawn(Vector3(0.0, 0.0, 2.0))
+func start(new_fractal_level: int = FractalLevelsScript.Type.FOLD) -> void:
+	fractal_level = new_fractal_level
+	world.reset(COURSE_SEED, Vector3(0.0, 0.0, 2.0), fractal_level)
+	position = world.find_safe_spawn(Vector3(0.0, 0.0, 2.0), 0.85, fractal_level)
 	previous_position = position
 	last_safe_position = position
 	distance_traveled = 0.0
 	score = 0
 	recovery_remaining = 0.0
 	active = true
-	world.reset(COURSE_SEED, position)
+	world.reset(COURSE_SEED, position, fractal_level)
 	health.reset()
 	health.grant_invulnerability(SPAWN_GRACE_SECONDS)
 	spawn_forward = world.find_safest_direction(position, PLAYER_RADIUS)
@@ -53,6 +58,10 @@ func start() -> void:
 
 func stop() -> void:
 	active = false
+
+func set_fractal_level(new_fractal_level: int) -> void:
+	fractal_level = new_fractal_level
+	world.fractal_level = new_fractal_level
 
 
 func physics_step(delta: float, forward_speed: float, forward_direction: Vector3) -> void:

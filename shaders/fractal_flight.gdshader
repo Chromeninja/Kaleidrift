@@ -7,6 +7,8 @@ uniform vec3 camera_forward = vec3(0.0, 0.0, -1.0);
 uniform vec3 camera_right = vec3(1.0, 0.0, 0.0);
 uniform vec3 camera_up = vec3(0.0, 1.0, 0.0);
 uniform float elapsed_time = 0.0;
+uniform int fractal_type : hint_range(0, 5, 1) = 0;
+uniform int fractal_iterations : hint_range(3, 12, 1) = 6;
 
 uniform int max_steps : hint_range(24, 112, 1) = 72;
 uniform int detail_iterations : hint_range(2, 7, 1) = 5;
@@ -58,6 +60,85 @@ float fractal_fold(vec3 point) {
 	return length(p) / scale - 0.24;
 }
 
+float mandelbox_sdf(vec3 point) {
+	vec3 p = mod(point + 4.0, 8.0) - 4.0;
+	float scale = 1.0;
+	float radius = 1.0;
+	for (int iteration = 0; iteration < 12; iteration++) {
+		if (iteration >= fractal_iterations) { break; }
+		p = clamp(p, -1.0, 1.0) * 2.0 - p;
+		float r2 = dot(p, p);
+		float fold_scale = clamp(max(0.25, 1.0 / max(r2, 0.25)), 0.25, 1.0);
+		p *= fold_scale;
+		scale *= fold_scale;
+		p = p * 1.42 + vec3(0.08, -0.04, 0.03);
+		scale *= 1.42;
+	}
+	return (length(p) - radius) / max(abs(scale), 0.001) * 0.62;
+}
+
+float mandelbulb_sdf(vec3 point) {
+	// Tile the bounded bulb into navigable flight cells instead of rendering
+	// one isolated object followed by an empty ray.
+	vec3 tiled_point = mod(point + vec3(4.0), vec3(8.0)) - vec3(4.0);
+	vec3 z = tiled_point * 0.72;
+	float dr = 1.0;
+	float radius = 0.0;
+	for (int iteration = 0; iteration < 12; iteration++) {
+		if (iteration >= fractal_iterations) { break; }
+		radius = length(z);
+		if (radius > 2.4) { break; }
+		float theta = asin(clamp(z.z / max(radius, 0.001), -1.0, 1.0));
+		float phi = atan(z.y, z.x);
+		float power = 7.0;
+		float zr = pow(max(radius, 0.001), power);
+		dr = pow(max(radius, 0.001), power - 1.0) * power * dr + 1.0;
+		theta *= power;
+		phi *= power;
+		z = zr * vec3(cos(theta) * cos(phi), cos(theta) * sin(phi), sin(theta)) + tiled_point * 0.72;
+	}
+	return 0.5 * log(max(radius, 0.001)) * radius / max(dr, 0.001) - 0.035;
+}
+
+float kifs_sdf(vec3 point) {
+	vec3 p = (mod(point + vec3(4.0), vec3(8.0)) - vec3(4.0)) * 0.82;
+	float scale = 1.0;
+	for (int iteration = 0; iteration < 12; iteration++) {
+		if (iteration >= fractal_iterations) { break; }
+		p = abs(p);
+		if (p.x < p.y) { p.xy = p.yx; }
+		if (p.x < p.z) { p.xz = p.zx; }
+		p = p * 2.0 - vec3(1.12, 1.04, 0.96);
+		scale *= 2.0;
+	}
+	return (length(max(abs(p) - vec3(0.32), vec3(0.0))) + min(max(p.x, max(p.y, p.z)), 0.0)) / scale - 0.035;
+}
+
+float menger_sdf(vec3 point) {
+	vec3 p = mod(point + 4.0, 8.0) - 4.0;
+	float scale = 1.0;
+	float distance_value = 1.0;
+	for (int iteration = 0; iteration < 12; iteration++) {
+		if (iteration >= fractal_iterations) { break; }
+		p = abs(p);
+		if (p.x < p.y) { p.xy = p.yx; }
+		if (p.x < p.z) { p.xz = p.zx; }
+		float hole = max(p.x - 1.0, max(p.y - 1.0, p.z - 1.0));
+		distance_value = min(distance_value, hole / scale);
+		p = p * 3.0 - vec3(2.0);
+		scale *= 3.0;
+	}
+	return distance_value * 0.48;
+}
+
+float fractal_sdf(vec3 point) {
+	if (fractal_type == 1) { return mandelbox_sdf(point); }
+	if (fractal_type == 2) { return mandelbulb_sdf(point); }
+	if (fractal_type == 3) { return kifs_sdf(point); }
+	if (fractal_type == 4) { return menger_sdf(point); }
+	return fractal_fold(point);
+}
+
 float gyroid_sdf(vec3 point) {
 	float region_wave = sin(point.x * 0.060) * 0.18 + cos(point.z * 0.052) * 0.16;
 	return abs(
@@ -86,7 +167,10 @@ float survival_world_sdf(vec3 point) {
 }
 
 float world_sdf_base(vec3 point) {
-	float folded = fractal_fold(point);
+	float folded = fractal_sdf(point);
+	if (fractal_type != 0) {
+		return folded;
+	}
 	return min(gyroid_sdf(point), folded);
 }
 
@@ -140,6 +224,10 @@ vec3 region_color(vec3 point, float travel_distance, vec3 normal) {
 	vec3 a = palette(detail + phase_a, vec3(0.46), vec3(0.44), vec3(1.0), vec3(0.00, 0.14, 0.31));
 	vec3 b = palette(detail + phase_b, vec3(0.46), vec3(0.44), vec3(1.0), vec3(0.48, 0.06, 0.73));
 	vec3 base = mix(a, b, transition);
+	if (fractal_type == 1) { base *= vec3(0.72, 0.92, 1.18); }
+	if (fractal_type == 2) { base *= vec3(1.20, 0.72, 0.88); }
+	if (fractal_type == 3) { base *= vec3(0.82, 1.18, 1.02); }
+	if (fractal_type == 4) { base *= vec3(1.12, 0.92, 0.62); }
 	if (survival_mode) {
 		float folded_ridge = exp(-abs(fractal_fold(point)) * 4.5);
 		vec3 folded_color = palette(
