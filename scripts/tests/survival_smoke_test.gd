@@ -2,11 +2,13 @@ extends SceneTree
 
 const HealthComponentScript := preload("res://scripts/gameplay/health_component.gd")
 const SurvivalWorldScript := preload("res://scripts/gameplay/survival_world.gd")
+const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
 
 
 func _init() -> void:
 	_test_world_cells_are_deterministic()
 	_test_open_world_has_free_space_and_solids()
+	_test_selected_worlds_have_safe_spawns()
 	_test_swept_collisions()
 	_test_health_invulnerability()
 	print("Survival smoke tests passed.")
@@ -36,7 +38,7 @@ func _test_open_world_has_free_space_and_solids() -> void:
 	var safe_direction: Vector3 = world.find_safest_direction(safe_spawn, 0.22)
 	assert(is_equal_approx(safe_direction.length(), 1.0))
 	var path_position := safe_spawn
-	for _step in 20:
+	for _step in range(20):
 		var next_position := path_position + safe_direction * 0.1
 		assert(not world.collides_with_world_swept_sphere(
 			path_position,
@@ -70,7 +72,7 @@ func _test_open_world_has_free_space_and_solids() -> void:
 	for direction in directions:
 		var probe := safe_spawn
 		var moved_through_open_space := false
-		for _step in 20:
+		for _step in range(20):
 			var next_probe: Vector3 = probe + direction * 0.08
 			if world.collides_with_world_swept_sphere(probe, next_probe, 0.22):
 				break
@@ -111,6 +113,25 @@ func _test_swept_collisions() -> void:
 	assert(world.collides_with_world_swept_sphere(start, solid_point, 0.22))
 
 
+func _test_selected_worlds_have_safe_spawns() -> void:
+	for level in [
+		FractalLevelsScript.Type.MANDELBOX,
+		FractalLevelsScript.Type.MANDELBULB,
+		FractalLevelsScript.Type.KIFS,
+		FractalLevelsScript.Type.MENGER,
+	]:
+		var spawn := SurvivalWorld.find_safe_spawn(Vector3(0.0, 0.0, 2.0), 0.85, level)
+		var world = SurvivalWorldScript.new()
+		world.reset(12345, spawn, level)
+		assert(world.get_world_sdf(spawn) >= 0.85)
+		var direction: Vector3 = world.find_safest_direction(spawn, 0.22)
+		assert(not world.collides_with_world_swept_sphere(
+			spawn,
+			spawn + direction * 0.1,
+			0.22
+		))
+
+
 func _test_health_invulnerability() -> void:
 	var health = HealthComponentScript.new()
 	health.reset()
@@ -126,7 +147,7 @@ func _test_health_invulnerability() -> void:
 
 func _assert_obstacles_match(first: Array, second: Array) -> void:
 	assert(first.size() == second.size())
-	for index in first.size():
+	for index in range(first.size()):
 		assert(first[index].identifier == second[index].identifier)
 		assert(first[index].position.is_equal_approx(second[index].position))
 		assert(is_equal_approx(first[index].radius, second[index].radius))

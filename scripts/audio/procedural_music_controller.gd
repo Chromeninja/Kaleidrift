@@ -186,7 +186,7 @@ func _ensure_audio_buses() -> void:
 		AudioServer.add_bus_effect(music_index, reverb)
 	var master_index := AudioServer.get_bus_index(&"Master")
 	var has_limiter := false
-	for effect_index in AudioServer.get_bus_effect_count(master_index):
+	for effect_index in range(AudioServer.get_bus_effect_count(master_index)):
 		if AudioServer.get_bus_effect(master_index, effect_index) is AudioEffectHardLimiter:
 			has_limiter = true
 	if not has_limiter:
