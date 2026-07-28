@@ -25,6 +25,7 @@ var obstacles: Array[CourseObstacle] = []
 var scored_obstacles: Dictionary = {}
 var world_seed := 0
 var fractal_level := FractalLevelsScript.Type.FOLD
+var fractal_iterations := 6
 var current_cell := EMPTY_CELL
 
 
@@ -45,7 +46,7 @@ func update(player_position: Vector3) -> void:
 	_rebuild_neighborhood()
 
 
-static func get_fractal_sdf(point: Vector3, level: int) -> float:
+static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> float:
 	if level == FractalLevelsScript.Type.MANDELBOX:
 		var p := Vector3(
 			fposmod(point.x + 4.0, 8.0) - 4.0,
@@ -53,7 +54,7 @@ static func get_fractal_sdf(point: Vector3, level: int) -> float:
 			fposmod(point.z + 4.0, 8.0) - 4.0
 		)
 		var scale := 1.0
-		for _iteration in 6:
+		for _iteration in iterations:
 			p = p.clamp(Vector3(-1.0, -1.0, -1.0), Vector3.ONE) * 2.0 - p
 			var radius_squared := p.length_squared()
 			var fold_scale := clampf(maxf(0.25, 1.0 / maxf(radius_squared, 0.25)), 0.25, 1.0)
@@ -128,9 +129,9 @@ static func get_fractal_sdf(point: Vector3, level: int) -> float:
 		return 0.5 * log(maxf(radius, 0.001)) * radius / maxf(derivative, 0.001) - 0.035
 	return 0.0
 
-static func get_base_world_sdf(point: Vector3, level: int = FractalLevelsScript.Type.FOLD) -> float:
+static func get_base_world_sdf(point: Vector3, level: int = FractalLevelsScript.Type.FOLD, iterations: int = 6) -> float:
 	if level != FractalLevelsScript.Type.FOLD:
-		return get_fractal_sdf(point, level)
+		return get_fractal_sdf(point, level, iterations)
 	var region_wave := sin(point.x * 0.060) * 0.18 + cos(point.z * 0.052) * 0.16
 	var gyroid := absf(
 		sin(point.x * 0.58) * cos(point.y * 0.58)
@@ -147,20 +148,20 @@ func get_world_sdf(point: Vector3) -> float:
 		+ sin(point.z * 0.58) * cos(point.x * 0.58)
 	) / 0.58 - (0.44 + region_wave)
 	if fractal_level != FractalLevelsScript.Type.FOLD:
-		return get_fractal_sdf(point, fractal_level)
+		return get_fractal_sdf(point, fractal_level, fractal_iterations)
 	return gyroid
 
 
-static func find_safe_spawn(origin: Vector3, required_clearance: float = 0.85, level: int = FractalLevelsScript.Type.FOLD) -> Vector3:
-	if get_base_world_sdf(origin, level) >= required_clearance:
+static func find_safe_spawn(origin: Vector3, required_clearance: float = 0.85, level: int = FractalLevelsScript.Type.FOLD, iterations: int = 6) -> Vector3:
+	if get_base_world_sdf(origin, level, iterations) >= required_clearance:
 		return origin
 	var best_position := origin
-	var best_clearance := get_base_world_sdf(origin, level)
+	var best_clearance := get_base_world_sdf(origin, level, iterations)
 	for x_index in range(-4, 5):
 		for y_index in range(-4, 5):
 			for z_index in range(-4, 5):
 				var candidate := origin + Vector3(x_index, y_index, z_index) * 1.15
-				var clearance := get_base_world_sdf(candidate, level)
+				var clearance := get_base_world_sdf(candidate, level, iterations)
 				if clearance > best_clearance:
 					best_clearance = clearance
 					best_position = candidate

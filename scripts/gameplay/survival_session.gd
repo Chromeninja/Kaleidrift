@@ -8,7 +8,7 @@ signal damaged
 signal game_over(distance: float, score: int)
 
 const COURSE_SEED := 0x4B414C45
-const PLAYER_RADIUS := 0.22
+const PLAYER_RADIUS := 0.18
 const NEAR_MISS_SCORE := 25
 const SPAWN_GRACE_SECONDS := 5.0
 const WALL_GRACE_SECONDS := 2.0
@@ -26,6 +26,7 @@ var score := 0
 var recovery_remaining := 0.0
 var active := false
 var fractal_level := FractalLevelsScript.Type.FOLD
+var fractal_iterations := 6
 
 
 func _ready() -> void:
@@ -40,10 +41,11 @@ func _ready() -> void:
 	health.depleted.connect(_on_health_depleted)
 
 
-func start(new_fractal_level: int = FractalLevelsScript.Type.FOLD) -> void:
+func start(new_fractal_level: int = FractalLevelsScript.Type.FOLD, new_fractal_iterations: int = 6) -> void:
 	fractal_level = new_fractal_level
+	set_fractal_iterations(new_fractal_iterations)
 	world.reset(COURSE_SEED, Vector3(0.0, 0.0, 2.0), fractal_level)
-	position = world.find_safe_spawn(Vector3(0.0, 0.0, 2.0), 0.85, fractal_level)
+	position = world.find_safe_spawn(Vector3(0.0, 0.0, 2.0), 0.85, fractal_level, fractal_iterations)
 	previous_position = position
 	last_safe_position = position
 	distance_traveled = 0.0
@@ -62,6 +64,11 @@ func stop() -> void:
 func set_fractal_level(new_fractal_level: int) -> void:
 	fractal_level = new_fractal_level
 	world.fractal_level = new_fractal_level
+
+
+func set_fractal_iterations(new_fractal_iterations: int) -> void:
+	fractal_iterations = maxi(new_fractal_iterations, 1)
+	world.fractal_iterations = fractal_iterations
 
 
 func physics_step(delta: float, forward_speed: float, forward_direction: Vector3) -> void:

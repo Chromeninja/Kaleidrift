@@ -1,5 +1,6 @@
 extends SceneTree
 
+const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
 
 func _init() -> void:
 	call_deferred("_run")
@@ -41,6 +42,14 @@ func _run() -> void:
 	var rendered_forward: Vector3 = main_scene.shader_material.get_shader_parameter("camera_forward")
 	assert(absf(rendered_forward.x) > 0.05)
 	assert(absf(rendered_forward.y) > 0.03)
+
+	main_scene.selected_fractal_level = FractalLevelsScript.Type.MIXED
+	main_scene._start_survival()
+	var mixed_spawn_position: Vector3 = main_scene.survival_session.position
+	for _frame in 10:
+		await physics_frame
+		await process_frame
+	assert(main_scene.survival_session.position.distance_to(mixed_spawn_position) > 0.05)
 
 	var session = main_scene.survival_session
 	session.world.obstacles.clear()

@@ -218,6 +218,7 @@ func _process(delta: float) -> void:
 	shader_material.set_shader_parameter("fractal_iterations", int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
 	if current_game_mode == GameMode.SURVIVAL and is_instance_valid(survival_session):
 		survival_session.set_fractal_level(int(fractal_info["active"]))
+		survival_session.set_fractal_iterations(int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
 	shader_material.set_shader_parameter("survival_mode", current_game_mode == GameMode.SURVIVAL)
 	if current_game_mode == GameMode.SURVIVAL:
 		shader_material.set_shader_parameter(
@@ -1190,8 +1191,16 @@ func _start_survival() -> void:
 	speed_slider.min_value = 1.5
 	speed = maxf(speed, speed_slider.min_value)
 	speed_slider.value = speed
-	var active_level := FractalLevelsScript.for_region(selected_fractal_level, 0, MUSIC_JOURNEY_SEED)
-	survival_session.start(active_level)
+	# Mixed Drift selects a concrete fractal by the player's region. Resolve it
+	# from the spawn position as well, so collision does not switch worlds on the
+	# first frame and strand the player inside a wall.
+	var active_level := _get_survival_fractal_level(Vector3(0.0, 0.0, 2.0))
+	for _settle_attempt in 2:
+		survival_session.start(active_level, int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
+		var spawn_level := _get_survival_fractal_level(survival_session.position)
+		if spawn_level == active_level:
+			break
+		active_level = spawn_level
 	var spawn_forward: Vector3 = survival_session.get_spawn_forward().normalized()
 	var spawn_up := Vector3.UP
 	if absf(spawn_forward.dot(spawn_up)) > 0.999:
@@ -1199,6 +1208,15 @@ func _start_survival() -> void:
 	camera_orientation = Basis.looking_at(spawn_forward, spawn_up).get_rotation_quaternion().normalized()
 	camera_position = survival_session.position
 	_start_playing()
+
+
+func _get_survival_fractal_level(position: Vector3) -> int:
+	var info := FractalLevelsScript.region_info(
+		selected_fractal_level,
+		position.z,
+		MUSIC_JOURNEY_SEED
+	)
+	return int(info["active"])
 
 
 func _start_playing() -> void:
