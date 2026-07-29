@@ -216,6 +216,10 @@ func _process(delta: float) -> void:
 	var fractal_info := FractalLevelsScript.region_info(selected_fractal_level, camera_position.z, MUSIC_JOURNEY_SEED)
 	shader_material.set_shader_parameter("fractal_type", int(fractal_info["active"]))
 	shader_material.set_shader_parameter("fractal_iterations", int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
+	shader_material.set_shader_parameter(
+		"world_variation_seed",
+		survival_session.world.world_variation_seed if current_game_mode == GameMode.SURVIVAL else fposmod(float(MUSIC_JOURNEY_SEED), 10000.0)
+	)
 	if current_game_mode == GameMode.SURVIVAL and is_instance_valid(survival_session):
 		survival_session.set_fractal_level(int(fractal_info["active"]))
 		survival_session.set_fractal_iterations(int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))

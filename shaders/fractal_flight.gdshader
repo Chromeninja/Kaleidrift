@@ -9,6 +9,9 @@ uniform vec3 camera_up = vec3(0.0, 1.0, 0.0);
 uniform float elapsed_time = 0.0;
 uniform int fractal_type : hint_range(0, 5, 1) = 0;
 uniform int fractal_iterations : hint_range(3, 12, 1) = 6;
+// A stable seed keeps procedural variation identical for a given run. It must
+// match SurvivalWorld.world_variation_seed so rendering and collision agree.
+uniform float world_variation_seed = 0.0;
 
 uniform int max_steps : hint_range(24, 112, 1) = 72;
 uniform int detail_iterations : hint_range(2, 7, 1) = 5;
@@ -32,6 +35,51 @@ mat2 rotate_2d(float angle) {
 	float c = cos(angle);
 	float s = sin(angle);
 	return mat2(vec2(c, -s), vec2(s, c));
+}
+
+float cell_hash(vec3 cell, float channel) {
+	return fract(sin(dot(cell, vec3(127.1, 311.7, 74.7)) + world_variation_seed * 0.013 + channel * 19.19) * 43758.5453123);
+}
+
+vec3 warped_lattice_point(vec3 point) {
+	// Warp the cell lattice itself, rather than merely rotating the contents of
+	// each cell. This bends long aligned voids into shifting passages.
+	float phase = world_variation_seed * 0.0013;
+	return point + vec3(
+		sin(point.z * 0.29 + phase) * 1.45 + sin(point.y * 0.17 + phase * 1.7) * 0.55,
+		sin(point.z * 0.23 + phase * 2.3) * 1.20 + sin(point.x * 0.19 + phase * 0.7) * 0.45,
+		sin(point.x * 0.13 + phase * 1.1) * 0.70 + sin(point.y * 0.16 + phase * 2.9) * 0.55
+	);
+}
+
+vec3 varied_cell_point(vec3 point, out float variation_a, out float variation_b) {
+	point = warped_lattice_point(point);
+	vec3 cell = floor((point + vec3(4.0)) / 8.0);
+	vec3 p = mod(point + vec3(4.0), vec3(8.0)) - vec3(4.0);
+	variation_a = cell_hash(cell, 0.0);
+	variation_b = cell_hash(cell, 1.0);
+	float variation_c = cell_hash(cell, 2.0);
+	p.xy = rotate_2d((variation_a - 0.5) * 0.42) * p.xy;
+	p.yz = rotate_2d((variation_b - 0.5) * 0.34) * p.yz;
+	p += vec3(variation_c - 0.5, variation_a - 0.5, variation_b - 0.5) * 0.50;
+	return p / mix(0.94, 1.06, variation_c);
+}
+
+float lane_breaker_sdf(vec3 point) {
+	// Dense fractals can leave connected voids even after the lattice is warped.
+	// Put one deterministic, off-centre mass in each flight cell so those voids
+	// become a sequence of dodgeable passages rather than permanent highways.
+	vec3 cell = floor(point / 8.0);
+	float offset_x = cell_hash(cell, 7.0) * 3.6 - 1.8;
+	float offset_y = cell_hash(cell, 8.0) * 3.6 - 1.8;
+	float offset_z = cell_hash(cell, 9.0) * 3.6 - 1.8;
+	vec3 center = cell * 8.0 + vec3(4.0) + vec3(offset_x, offset_y, offset_z);
+	vec3 shape_scale = vec3(
+		mix(0.95, 1.65, cell_hash(cell, 10.0)),
+		mix(0.80, 1.45, cell_hash(cell, 11.0)),
+		mix(0.95, 1.65, cell_hash(cell, 12.0))
+	);
+	return length((point - center) / shape_scale) - mix(1.00, 1.42, cell_hash(cell, 13.0));
 }
 
 float capsule_sdf(vec3 point, vec3 start, vec3 end, float radius) {
@@ -80,8 +128,10 @@ float mandelbox_sdf(vec3 point) {
 float mandelbulb_sdf(vec3 point) {
 	// Tile the bounded bulb into navigable flight cells instead of rendering
 	// one isolated object followed by an empty ray.
-	vec3 tiled_point = mod(point + vec3(4.0), vec3(8.0)) - vec3(4.0);
-	vec3 z = tiled_point * 0.72;
+	float variation_a;
+	float variation_b;
+	vec3 tiled_point = varied_cell_point(point, variation_a, variation_b);
+	vec3 z = tiled_point * mix(0.68, 0.76, variation_a);
 	float dr = 1.0;
 	float radius = 0.0;
 	for (int iteration = 0; iteration < 12; iteration++) {
@@ -90,32 +140,36 @@ float mandelbulb_sdf(vec3 point) {
 		if (radius > 2.4) { break; }
 		float theta = asin(clamp(z.z / max(radius, 0.001), -1.0, 1.0));
 		float phi = atan(z.y, z.x);
-		float power = 7.0;
+		float power = mix(6.6, 7.4, variation_b);
 		float zr = pow(max(radius, 0.001), power);
 		dr = pow(max(radius, 0.001), power - 1.0) * power * dr + 1.0;
 		theta *= power;
 		phi *= power;
-		z = zr * vec3(cos(theta) * cos(phi), cos(theta) * sin(phi), sin(theta)) + tiled_point * 0.72;
+		z = zr * vec3(cos(theta) * cos(phi), cos(theta) * sin(phi), sin(theta)) + tiled_point * mix(0.68, 0.76, variation_a);
 	}
 	return 0.5 * log(max(radius, 0.001)) * radius / max(dr, 0.001) - 0.035;
 }
 
 float kifs_sdf(vec3 point) {
-	vec3 p = (mod(point + vec3(4.0), vec3(8.0)) - vec3(4.0)) * 0.82;
+	float variation_a;
+	float variation_b;
+	vec3 p = varied_cell_point(point, variation_a, variation_b) * mix(0.78, 0.86, variation_a);
 	float scale = 1.0;
 	for (int iteration = 0; iteration < 12; iteration++) {
 		if (iteration >= fractal_iterations) { break; }
 		p = abs(p);
 		if (p.x < p.y) { p.xy = p.yx; }
 		if (p.x < p.z) { p.xz = p.zx; }
-		p = p * 2.0 - vec3(1.12, 1.04, 0.96);
+		p = p * 2.0 - vec3(1.12 + (variation_b - 0.5) * 0.16, 1.04, 0.96 + (variation_a - 0.5) * 0.16);
 		scale *= 2.0;
 	}
 	return (length(max(abs(p) - vec3(0.32), vec3(0.0))) + min(max(p.x, max(p.y, p.z)), 0.0)) / scale - 0.035;
 }
 
 float menger_sdf(vec3 point) {
-	vec3 p = mod(point + 4.0, 8.0) - 4.0;
+	float variation_a;
+	float variation_b;
+	vec3 p = varied_cell_point(point, variation_a, variation_b);
 	float scale = 1.0;
 	float distance_value = 1.0;
 	for (int iteration = 0; iteration < 12; iteration++) {
@@ -123,7 +177,8 @@ float menger_sdf(vec3 point) {
 		p = abs(p);
 		if (p.x < p.y) { p.xy = p.yx; }
 		if (p.x < p.z) { p.xz = p.zx; }
-		float hole = max(p.x - 1.0, max(p.y - 1.0, p.z - 1.0));
+		float hole_width = mix(0.90, 1.08, variation_a);
+		float hole = max(p.x - hole_width, max(p.y - 1.0, p.z - mix(0.92, 1.06, variation_b)));
 		distance_value = min(distance_value, hole / scale);
 		p = p * 3.0 - vec3(2.0);
 		scale *= 3.0;
@@ -133,9 +188,9 @@ float menger_sdf(vec3 point) {
 
 float fractal_sdf(vec3 point) {
 	if (fractal_type == 1) { return mandelbox_sdf(point); }
-	if (fractal_type == 2) { return mandelbulb_sdf(point); }
-	if (fractal_type == 3) { return kifs_sdf(point); }
-	if (fractal_type == 4) { return menger_sdf(point); }
+	if (fractal_type == 2) { return min(mandelbulb_sdf(point), lane_breaker_sdf(point)); }
+	if (fractal_type == 3) { return min(kifs_sdf(point), lane_breaker_sdf(point)); }
+	if (fractal_type == 4) { return min(menger_sdf(point), lane_breaker_sdf(point)); }
 	return fractal_fold(point);
 }
 

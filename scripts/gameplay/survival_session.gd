@@ -11,7 +11,6 @@ const COURSE_SEED := 0x4B414C45
 const PLAYER_RADIUS := 0.18
 const NEAR_MISS_SCORE := 25
 const SPAWN_GRACE_SECONDS := 5.0
-const WALL_GRACE_SECONDS := 2.0
 const HIT_RECOVERY_SECONDS := 0.28
 const SAFE_POSITION_MARGIN := 0.55
 
@@ -45,7 +44,13 @@ func start(new_fractal_level: int = FractalLevelsScript.Type.FOLD, new_fractal_i
 	fractal_level = new_fractal_level
 	set_fractal_iterations(new_fractal_iterations)
 	world.reset(COURSE_SEED, Vector3(0.0, 0.0, 2.0), fractal_level)
-	position = world.find_safe_spawn(Vector3(0.0, 0.0, 2.0), 0.85, fractal_level, fractal_iterations)
+	position = world.find_safe_spawn(
+		Vector3(0.0, 0.0, 2.0),
+		0.85,
+		fractal_level,
+		fractal_iterations,
+		world.world_variation_seed
+	)
 	previous_position = position
 	last_safe_position = position
 	distance_traveled = 0.0
@@ -100,7 +105,6 @@ func physics_step(delta: float, forward_speed: float, forward_direction: Vector3
 			position = last_safe_position
 			world.update(position)
 			health.take_damage(1)
-			health.grant_invulnerability(WALL_GRACE_SECONDS)
 		else:
 			position = previous_position
 			health.take_damage(1)

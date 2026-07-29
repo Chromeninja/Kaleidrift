@@ -6,7 +6,9 @@ signal damaged(amount: int)
 signal depleted
 
 @export var maximum_health: int = 5
-@export var invulnerability_seconds: float = 1.25
+# Brief protection prevents a single overlap from draining the entire health
+# bar, while still making successive wall and lane-breaker impacts meaningful.
+@export var invulnerability_seconds: float = 0.75
 
 var current_health: int = 5
 var invulnerability_remaining: float = 0.0

@@ -24,15 +24,20 @@ class CourseObstacle:
 var obstacles: Array[CourseObstacle] = []
 var scored_obstacles: Dictionary = {}
 var world_seed := 0
+var world_variation_seed := 0.0
 var fractal_level := FractalLevelsScript.Type.FOLD
 var fractal_iterations := 6
 var current_cell := EMPTY_CELL
+
+static func variation_seed_for_world_seed(seed: int) -> float:
+	return fposmod(float(abs(seed)), 10000.0)
 
 
 func reset(new_world_seed: int, player_position: Vector3, new_fractal_level: int = FractalLevelsScript.Type.FOLD) -> void:
 	obstacles.clear()
 	scored_obstacles.clear()
 	world_seed = new_world_seed
+	world_variation_seed = variation_seed_for_world_seed(new_world_seed)
 	fractal_level = new_fractal_level
 	current_cell = EMPTY_CELL
 	update(player_position)
@@ -46,7 +51,63 @@ func update(player_position: Vector3) -> void:
 	_rebuild_neighborhood()
 
 
-static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> float:
+static func _cell_hash(cell: Vector3, variation_seed: float, channel: float) -> float:
+	var value := sin(cell.dot(Vector3(127.1, 311.7, 74.7)) + variation_seed * 0.013 + channel * 19.19) * 43758.5453123
+	return value - floorf(value)
+
+
+static func _warped_lattice_point(point: Vector3, variation_seed: float) -> Vector3:
+	var phase := variation_seed * 0.0013
+	return point + Vector3(
+		sin(point.z * 0.29 + phase) * 1.45 + sin(point.y * 0.17 + phase * 1.7) * 0.55,
+		sin(point.z * 0.23 + phase * 2.3) * 1.20 + sin(point.x * 0.19 + phase * 0.7) * 0.45,
+		sin(point.x * 0.13 + phase * 1.1) * 0.70 + sin(point.y * 0.16 + phase * 2.9) * 0.55
+	)
+
+
+static func _varied_cell_point(point: Vector3, variation_seed: float) -> Vector3:
+	point = _warped_lattice_point(point, variation_seed)
+	var cell := Vector3(
+		floorf((point.x + 4.0) / 8.0),
+		floorf((point.y + 4.0) / 8.0),
+		floorf((point.z + 4.0) / 8.0)
+	)
+	var p := Vector3(
+		fposmod(point.x + 4.0, 8.0) - 4.0,
+		fposmod(point.y + 4.0, 8.0) - 4.0,
+		fposmod(point.z + 4.0, 8.0) - 4.0
+	)
+	var variation_a := _cell_hash(cell, variation_seed, 0.0)
+	var variation_b := _cell_hash(cell, variation_seed, 1.0)
+	var variation_c := _cell_hash(cell, variation_seed, 2.0)
+	var xy_angle := (variation_a - 0.5) * 0.42
+	var xy := Vector2(p.x, p.y).rotated(-xy_angle)
+	p.x = xy.x
+	p.y = xy.y
+	var yz_angle := (variation_b - 0.5) * 0.34
+	var yz := Vector2(p.y, p.z).rotated(-yz_angle)
+	p.y = yz.x
+	p.z = yz.y
+	p += Vector3(variation_c - 0.5, variation_a - 0.5, variation_b - 0.5) * 0.50
+	return p / lerpf(0.94, 1.06, variation_c)
+
+
+static func _lane_breaker_sdf(point: Vector3, variation_seed: float) -> float:
+	var cell := Vector3(floorf(point.x / 8.0), floorf(point.y / 8.0), floorf(point.z / 8.0))
+	var center := cell * 8.0 + Vector3(4.0, 4.0, 4.0) + Vector3(
+		_cell_hash(cell, variation_seed, 7.0) * 3.6 - 1.8,
+		_cell_hash(cell, variation_seed, 8.0) * 3.6 - 1.8,
+		_cell_hash(cell, variation_seed, 9.0) * 3.6 - 1.8
+	)
+	var shape_scale := Vector3(
+		lerpf(0.95, 1.65, _cell_hash(cell, variation_seed, 10.0)),
+		lerpf(0.80, 1.45, _cell_hash(cell, variation_seed, 11.0)),
+		lerpf(0.95, 1.65, _cell_hash(cell, variation_seed, 12.0))
+	)
+	return ((point - center) / shape_scale).length() - lerpf(1.00, 1.42, _cell_hash(cell, variation_seed, 13.0))
+
+
+static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6, variation_seed: float = 0.0) -> float:
 	if level == FractalLevelsScript.Type.MANDELBOX:
 		var p := Vector3(
 			fposmod(point.x + 4.0, 8.0) - 4.0,
@@ -64,7 +125,11 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 			scale *= 1.42
 		return (p.length() - 1.0) / maxf(absf(scale), 0.001) * 0.62
 	if level == FractalLevelsScript.Type.MENGER:
-		var p := Vector3(fposmod(point.x + 4.0, 8.0) - 4.0, fposmod(point.y + 4.0, 8.0) - 4.0, fposmod(point.z + 4.0, 8.0) - 4.0)
+		var p := _varied_cell_point(point, variation_seed)
+		var warped_point := _warped_lattice_point(point, variation_seed)
+		var cell := Vector3(floorf((warped_point.x + 4.0) / 8.0), floorf((warped_point.y + 4.0) / 8.0), floorf((warped_point.z + 4.0) / 8.0))
+		var variation_a := _cell_hash(cell, variation_seed, 0.0)
+		var variation_b := _cell_hash(cell, variation_seed, 1.0)
 		var value := 1.0
 		var scale := 1.0
 		for _iteration in range(iterations):
@@ -77,16 +142,17 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 				var xz := p.x
 				p.x = p.z
 				p.z = xz
-			value = minf(value, maxf(p.x - 1.0, maxf(p.y - 1.0, p.z - 1.0)) / scale)
+			var hole_width := lerpf(0.90, 1.08, variation_a)
+			value = minf(value, maxf(p.x - hole_width, maxf(p.y - 1.0, p.z - lerpf(0.92, 1.06, variation_b))) / scale)
 			p = p * 3.0 - Vector3(2.0, 2.0, 2.0)
 			scale *= 3.0
-		return value * 0.48
+		return minf(value * 0.48, _lane_breaker_sdf(point, variation_seed))
 	if level == FractalLevelsScript.Type.KIFS:
-		var k := (Vector3(
-			fposmod(point.x + 4.0, 8.0) - 4.0,
-			fposmod(point.y + 4.0, 8.0) - 4.0,
-			fposmod(point.z + 4.0, 8.0) - 4.0
-		)) * 0.82
+		var warped_point := _warped_lattice_point(point, variation_seed)
+		var k_cell := Vector3(floorf((warped_point.x + 4.0) / 8.0), floorf((warped_point.y + 4.0) / 8.0), floorf((warped_point.z + 4.0) / 8.0))
+		var k_a := _cell_hash(k_cell, variation_seed, 0.0)
+		var k_b := _cell_hash(k_cell, variation_seed, 1.0)
+		var k := _varied_cell_point(point, variation_seed) * lerpf(0.78, 0.86, k_a)
 		var k_scale := 1.0
 		for _iteration in range(iterations):
 			k = k.abs()
@@ -98,21 +164,22 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 				var kz := k.x
 				k.x = k.z
 				k.z = kz
-			k = k * 2.0 - Vector3(1.12, 1.04, 0.96)
+			k = k * 2.0 - Vector3(1.12 + (k_b - 0.5) * 0.16, 1.04, 0.96 + (k_a - 0.5) * 0.16)
 			k_scale *= 2.0
 		var exterior := Vector3(
 			maxf(k.abs().x - 0.32, 0.0),
 			maxf(k.abs().y - 0.32, 0.0),
 			maxf(k.abs().z - 0.32, 0.0)
 		)
-		return (exterior.length() + minf(maxf(k.x, maxf(k.y, k.z)), 0.0)) / k_scale - 0.035
+		return minf((exterior.length() + minf(maxf(k.x, maxf(k.y, k.z)), 0.0)) / k_scale - 0.035, _lane_breaker_sdf(point, variation_seed))
 	if level == FractalLevelsScript.Type.MANDELBULB:
-		var tiled_point := Vector3(
-			fposmod(point.x + 4.0, 8.0) - 4.0,
-			fposmod(point.y + 4.0, 8.0) - 4.0,
-			fposmod(point.z + 4.0, 8.0) - 4.0
-		)
-		var z := tiled_point * 0.72
+		var warped_point := _warped_lattice_point(point, variation_seed)
+		var bulb_cell := Vector3(floorf((warped_point.x + 4.0) / 8.0), floorf((warped_point.y + 4.0) / 8.0), floorf((warped_point.z + 4.0) / 8.0))
+		var bulb_a := _cell_hash(bulb_cell, variation_seed, 0.0)
+		var bulb_b := _cell_hash(bulb_cell, variation_seed, 1.0)
+		var tiled_point := _varied_cell_point(point, variation_seed)
+		var bulb_scale := lerpf(0.68, 0.76, bulb_a)
+		var z := tiled_point * bulb_scale
 		var radius := 0.0
 		var derivative := 1.0
 		for _iteration in range(iterations):
@@ -120,18 +187,18 @@ static func get_fractal_sdf(point: Vector3, level: int, iterations: int = 6) -> 
 			if radius > 2.4: break
 			var theta := asin(clampf(z.z / maxf(radius, 0.001), -1.0, 1.0))
 			var phi := atan2(z.y, z.x)
-			var power := 7.0
+			var power := lerpf(6.6, 7.4, bulb_b)
 			var zr := pow(maxf(radius, 0.001), power)
 			derivative = pow(maxf(radius, 0.001), power - 1.0) * power * derivative + 1.0
 			theta *= power
 			phi *= power
-			z = zr * Vector3(cos(theta) * cos(phi), cos(theta) * sin(phi), sin(theta)) + tiled_point * 0.72
-		return 0.5 * log(maxf(radius, 0.001)) * radius / maxf(derivative, 0.001) - 0.035
+			z = zr * Vector3(cos(theta) * cos(phi), cos(theta) * sin(phi), sin(theta)) + tiled_point * bulb_scale
+		return minf(0.5 * log(maxf(radius, 0.001)) * radius / maxf(derivative, 0.001) - 0.035, _lane_breaker_sdf(point, variation_seed))
 	return 0.0
 
-static func get_base_world_sdf(point: Vector3, level: int = FractalLevelsScript.Type.FOLD, iterations: int = 6) -> float:
+static func get_base_world_sdf(point: Vector3, level: int = FractalLevelsScript.Type.FOLD, iterations: int = 6, variation_seed: float = 0.0) -> float:
 	if level != FractalLevelsScript.Type.FOLD:
-		return get_fractal_sdf(point, level, iterations)
+		return get_fractal_sdf(point, level, iterations, variation_seed)
 	var region_wave := sin(point.x * 0.060) * 0.18 + cos(point.z * 0.052) * 0.16
 	var gyroid := absf(
 		sin(point.x * 0.58) * cos(point.y * 0.58)
@@ -148,20 +215,20 @@ func get_world_sdf(point: Vector3) -> float:
 		+ sin(point.z * 0.58) * cos(point.x * 0.58)
 	) / 0.58 - (0.44 + region_wave)
 	if fractal_level != FractalLevelsScript.Type.FOLD:
-		return get_fractal_sdf(point, fractal_level, fractal_iterations)
+		return get_fractal_sdf(point, fractal_level, fractal_iterations, world_variation_seed)
 	return gyroid
 
 
-static func find_safe_spawn(origin: Vector3, required_clearance: float = 0.85, level: int = FractalLevelsScript.Type.FOLD, iterations: int = 6) -> Vector3:
-	if get_base_world_sdf(origin, level, iterations) >= required_clearance:
+static func find_safe_spawn(origin: Vector3, required_clearance: float = 0.85, level: int = FractalLevelsScript.Type.FOLD, iterations: int = 6, variation_seed: float = 0.0) -> Vector3:
+	if get_base_world_sdf(origin, level, iterations, variation_seed) >= required_clearance:
 		return origin
 	var best_position := origin
-	var best_clearance := get_base_world_sdf(origin, level, iterations)
-	for x_index in range(-4, 5):
-		for y_index in range(-4, 5):
-			for z_index in range(-4, 5):
+	var best_clearance := get_base_world_sdf(origin, level, iterations, variation_seed)
+	for x_index in range(-6, 7):
+		for y_index in range(-6, 7):
+			for z_index in range(-6, 7):
 				var candidate := origin + Vector3(x_index, y_index, z_index) * 1.15
-				var clearance := get_base_world_sdf(candidate, level, iterations)
+				var clearance := get_base_world_sdf(candidate, level, iterations, variation_seed)
 				if clearance > best_clearance:
 					best_clearance = clearance
 					best_position = candidate
