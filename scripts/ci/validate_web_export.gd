@@ -7,5 +7,9 @@ func _init() -> void:
 	for file_name in REQUIRED_FILES:
 		var path := "build/web/%s" % file_name
 		assert(FileAccess.file_exists(path), "Missing Web export file: %s" % path)
+	var html := FileAccess.get_file_as_string("build/web/index.html")
+	assert(html.contains("fullscreen-button"), "Web shell fullscreen control missing")
+	assert(html.contains("kaleidriftIsFullscreen"), "Web fullscreen state bridge missing")
+	assert(html.contains("kaleidriftAudioStart"), "Web audio fallback missing")
 	print("Web export validation passed.")
 	quit()

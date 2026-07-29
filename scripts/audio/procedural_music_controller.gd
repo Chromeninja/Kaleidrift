@@ -23,6 +23,7 @@ var _region_change_pending := false
 var _smoothed_energy := 0.0
 var _smoothed_proximity := 0.0
 var _smoothed_gain := 0.0
+var _web_audio_started := false
 
 
 func _ready() -> void:
@@ -43,6 +44,10 @@ func start(journey_seed: int) -> void:
 	_step_elapsed = 0.0
 	_step_index = 0
 	_bar_index = 0
+	if OS.has_feature("web"):
+		_web_audio_started = true
+		JavaScriptBridge.eval("window.kaleidriftAudioStart(%s);" % str(volume_linear))
+		return
 	if _bank_ready and enabled:
 		_begin_playback()
 
@@ -56,6 +61,9 @@ func set_context(new_context: MusicContext) -> void:
 
 func set_music_enabled(new_enabled: bool) -> void:
 	enabled = new_enabled
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.kaleidriftAudioSetEnabled(%s);" % ("true" if enabled else "false"))
+		return
 	if not enabled:
 		player.stop()
 		playback = null
@@ -65,10 +73,16 @@ func set_music_enabled(new_enabled: bool) -> void:
 
 func set_volume_linear(new_volume: float) -> void:
 	volume_linear = clampf(new_volume, 0.0, 1.0)
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.kaleidriftAudioSetVolume(%s);" % str(volume_linear))
 
 
 func stop(fade_seconds: float = 2.0) -> void:
 	_started = false
+	if OS.has_feature("web"):
+		_web_audio_started = false
+		JavaScriptBridge.eval("window.kaleidriftAudioStop(%s);" % str(maxf(fade_seconds, 0.01)))
+		return
 	if not is_instance_valid(player):
 		return
 	var tween := create_tween()
@@ -77,6 +91,8 @@ func stop(fade_seconds: float = 2.0) -> void:
 
 
 func _process(delta: float) -> void:
+	if OS.has_feature("web"):
+		return
 	if not _bank_ready:
 		_bank_ready = bank.build_next()
 		if _bank_ready and _started and enabled:

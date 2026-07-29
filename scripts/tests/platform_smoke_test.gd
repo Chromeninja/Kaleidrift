@@ -15,6 +15,10 @@ func _test_platform_capabilities() -> void:
 	assert(PlatformCapabilitiesScript.default_quality() >= 0)
 	assert(PlatformCapabilitiesScript.default_quality() <= 1)
 	assert(PlatformCapabilitiesScript.supports_exit() == not PlatformCapabilitiesScript.is_web())
+	assert(PlatformCapabilitiesScript.should_show_inflight_menu() == PlatformCapabilitiesScript.is_mobile_web())
+	if not PlatformCapabilitiesScript.is_web():
+		assert(not PlatformCapabilitiesScript.is_mobile_web())
+		assert(not PlatformCapabilitiesScript.is_web_fullscreen())
 
 
 func _test_input_normalization() -> void:

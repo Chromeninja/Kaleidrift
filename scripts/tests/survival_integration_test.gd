@@ -23,8 +23,12 @@ func _run() -> void:
 	assert(main_scene.survival_session.distance_traveled > 0.0)
 	assert(main_scene.shader_material.get_shader_parameter("survival_mode"))
 	assert(main_scene.gameplay_overlay.visible)
+	assert(not main_scene.gameplay_menu_button.visible)
+	assert(main_scene.gameplay_hud_panel.visible)
 	assert(not main_scene.menu_panel.visible)
-	assert(main_scene.health_label.text.contains("SHIELD"))
+	assert(main_scene.health_label.text.contains("HEALTH"))
+	assert(main_scene.shield_label.text.contains("SHIELD"))
+	assert(main_scene.health_pips.size() == 5)
 	assert(main_scene.music_controller.context.game_mode == MusicContext.Mode.SURVIVAL)
 	var spawn_forward: Vector3 = main_scene.survival_session.get_spawn_forward()
 	var initial_rendered_forward: Vector3 = main_scene.shader_material.get_shader_parameter("camera_forward")
@@ -76,7 +80,16 @@ func _run() -> void:
 	session.physics_step(1.0, wall_distance, wall_direction)
 	assert(session.health.current_health == session.health.maximum_health - 1)
 	assert(session.position.is_equal_approx(rollback_position))
-	assert(session.health.invulnerability_remaining >= 1.9)
+	assert(session.health.invulnerability_remaining >= session.health.invulnerability_seconds)
+	assert(main_scene.health_pips[session.health.current_health].color == Color(0.18, 0.24, 0.30))
+
+	main_scene._start_endless()
+	var menu_position: Vector3 = main_scene.camera_position
+	main_scene.gameplay_menu_button.emit_signal("pressed")
+	await process_frame
+	assert(main_scene.interface_state == 0)
+	assert(main_scene.camera_position.is_equal_approx(menu_position))
+	assert(not main_scene.gameplay_overlay.visible)
 
 	main_scene.survival_session.health.current_health = 1
 	main_scene.survival_session.health.invulnerability_remaining = 0.0

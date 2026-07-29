@@ -89,8 +89,11 @@ var mode_select_button: Button
 var game_over_title: Label
 var game_over_result: Label
 var gameplay_overlay: Control
+var gameplay_menu_button: Button
 var gameplay_hud_panel: PanelContainer
 var health_label: Label
+var health_pips: Array[ColorRect] = []
+var shield_label: Label
 var distance_label: Label
 var score_label: Label
 var damage_flash: ColorRect
@@ -132,6 +135,7 @@ var _last_controller_log_time_ms := 0
 var survival_session
 var music_controller: ProceduralMusicController
 var damage_flash_strength := 0.0
+var _fullscreen_sync_elapsed := 0.0
 
 
 func _ready() -> void:
@@ -193,6 +197,10 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	_fullscreen_sync_elapsed += delta
+	if _fullscreen_sync_elapsed >= 0.1:
+		_fullscreen_sync_elapsed = 0.0
+		_sync_gameplay_menu_visibility()
 	if interface_state == InterfaceState.PLAYING:
 		var keyboard_steering := flight_input.keyboard_delta(delta)
 		if keyboard_steering != Vector2.ZERO:
@@ -206,7 +214,7 @@ func _process(delta: float) -> void:
 	var forward := -basis.z.normalized()
 	var right := basis.x.normalized()
 	var up := basis.y.normalized()
-	if current_game_mode == GameMode.ENDLESS:
+	if interface_state == InterfaceState.PLAYING and current_game_mode == GameMode.ENDLESS:
 		camera_position += forward * speed * delta
 	shader_material.set_shader_parameter("camera_position", camera_position)
 	shader_material.set_shader_parameter("camera_forward", forward)
@@ -341,6 +349,28 @@ func _panel_style() -> StyleBoxFlat:
 	return style
 
 
+func _mode_button_style(background: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(12)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	return style
+
+
+func _apply_mode_button_theme(button: Button, background: Color, border: Color) -> void:
+	button.add_theme_stylebox_override("normal", _mode_button_style(background, border))
+	button.add_theme_stylebox_override("hover", _mode_button_style(background.lightened(0.12), border.lightened(0.15)))
+	button.add_theme_stylebox_override("pressed", _mode_button_style(background.darkened(0.12), border))
+	button.add_theme_stylebox_override("focus", _mode_button_style(background, Color.WHITE))
+	button.add_theme_color_override("font_color", Color(0.97, 0.99, 1.0))
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+
+
 func _build_throttle(parent: Control) -> void:
 	throttle_panel = PanelContainer.new()
 	throttle_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -434,7 +464,9 @@ func _build_menu_panel(parent: Control) -> void:
 	endless_description.add_theme_color_override("font_color", Color(0.68, 0.84, 0.95))
 	main_menu_content.add_child(endless_description)
 	play_button = Button.new()
-	play_button.text = "Fly Endless"
+	play_button.text = "∞  Fly Endless"
+	play_button.tooltip_text = "Endless mode: relaxed, collision-free exploration"
+	_apply_mode_button_theme(play_button, Color(0.025, 0.34, 0.40), Color(0.22, 0.92, 0.90))
 	play_button.pressed.connect(_start_endless)
 	main_menu_content.add_child(play_button)
 	var survival_description := Label.new()
@@ -444,7 +476,9 @@ func _build_menu_panel(parent: Control) -> void:
 	survival_description.add_theme_color_override("font_color", Color(0.94, 0.74, 0.82))
 	main_menu_content.add_child(survival_description)
 	survival_button = Button.new()
-	survival_button.text = "Start Survival"
+	survival_button.text = "◇  Start Survival"
+	survival_button.tooltip_text = "Survival mode: avoid hazards and protect your health"
+	_apply_mode_button_theme(survival_button, Color(0.48, 0.16, 0.08), Color(1.0, 0.68, 0.20))
 	survival_button.pressed.connect(_start_survival)
 	main_menu_content.add_child(survival_button)
 	settings_button = Button.new()
@@ -631,7 +665,7 @@ func _build_gameplay_overlay() -> void:
 	gameplay_overlay = Control.new()
 	gameplay_overlay.name = "GameplayOverlay"
 	gameplay_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	gameplay_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gameplay_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
 	gameplay_overlay.visible = false
 	hud_layer.add_child(gameplay_overlay)
 
@@ -640,6 +674,15 @@ func _build_gameplay_overlay() -> void:
 	damage_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	damage_flash.color = Color(1.0, 0.12, 0.18, 0.0)
 	gameplay_overlay.add_child(damage_flash)
+
+	gameplay_menu_button = Button.new()
+	gameplay_menu_button.name = "GameplayMenuButton"
+	gameplay_menu_button.text = "☰  Menu"
+	gameplay_menu_button.tooltip_text = "Return to the main menu"
+	gameplay_menu_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	gameplay_menu_button.pressed.connect(_show_main_menu)
+	gameplay_overlay.add_child(gameplay_menu_button)
+	gameplay_menu_button.visible = PlatformCapabilities.should_show_inflight_menu()
 
 	gameplay_hud_panel = PanelContainer.new()
 	gameplay_hud_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -660,6 +703,22 @@ func _build_gameplay_overlay() -> void:
 	health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	health_label.add_theme_color_override("font_color", Color(1.0, 0.72, 0.78))
 	content.add_child(health_label)
+	var health_pips_container := HBoxContainer.new()
+	health_pips_container.alignment = BoxContainer.ALIGNMENT_END
+	health_pips_container.add_theme_constant_override("separation", 5)
+	content.add_child(health_pips_container)
+	for _pip_index in range(5):
+		var pip := ColorRect.new()
+		pip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pip.custom_minimum_size = Vector2(18.0, 10.0)
+		pip.color = Color(0.18, 0.24, 0.30)
+		health_pips_container.add_child(pip)
+		health_pips.append(pip)
+	shield_label = Label.new()
+	shield_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	shield_label.add_theme_color_override("font_color", Color(0.48, 0.90, 1.0))
+	shield_label.visible = false
+	content.add_child(shield_label)
 	distance_label = Label.new()
 	distance_label.text = "DISTANCE 0 m"
 	distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -684,7 +743,11 @@ func _apply_steering_delta(delta_pixels: Vector2) -> void:
 
 func _is_over_hud_control(position: Vector2) -> bool:
 	if interface_state == InterfaceState.PLAYING:
-		return throttle_panel.visible and throttle_panel.get_global_rect().has_point(position)
+		return (
+			(throttle_panel.visible and throttle_panel.get_global_rect().has_point(position))
+			or (is_instance_valid(gameplay_menu_button) and gameplay_menu_button.get_global_rect().has_point(position))
+			or (gameplay_hud_panel.visible and gameplay_hud_panel.get_global_rect().has_point(position))
+		)
 	return (
 		throttle_panel.get_global_rect().has_point(position)
 		or menu_panel.get_global_rect().has_point(position)
@@ -913,6 +976,11 @@ func _update_safe_layout() -> void:
 	gameplay_hud_panel.offset_right = -gameplay_hud_right
 	gameplay_hud_panel.offset_bottom = gameplay_hud_top + 112.0 * ui_scale
 	var touch_height := 50.0 * ui_scale
+	gameplay_menu_button.custom_minimum_size = Vector2(112.0 * ui_scale, touch_height)
+	gameplay_menu_button.offset_left = float(safe_rect.position.x + padding)
+	gameplay_menu_button.offset_top = float(safe_rect.position.y + padding)
+	gameplay_menu_button.offset_right = gameplay_menu_button.offset_left + gameplay_menu_button.custom_minimum_size.x
+	gameplay_menu_button.offset_bottom = gameplay_menu_button.offset_top + touch_height
 	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
 	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	music_toggle.custom_minimum_size = Vector2(0.0, touch_height)
@@ -940,6 +1008,7 @@ func _update_safe_layout() -> void:
 	throttle_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
 	speed_readout.add_theme_font_size_override("font_size", roundi(18.0 * ui_scale))
 	health_label.add_theme_font_size_override("font_size", roundi(16.0 * ui_scale))
+	shield_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
 	distance_label.add_theme_font_size_override("font_size", body_font)
 	score_label.add_theme_font_size_override("font_size", body_font)
 	quality_selector.add_theme_font_size_override("font_size", body_font)
@@ -961,6 +1030,7 @@ func _update_safe_layout() -> void:
 		settings_back_button,
 		retry_button,
 		mode_select_button,
+		gameplay_menu_button,
 	]:
 		button.add_theme_font_size_override("font_size", body_font)
 
@@ -1042,8 +1112,8 @@ func _update_hdr_ui() -> void:
 	if not is_instance_valid(hdr_status_label):
 		return
 	if _is_web_platform():
-		hdr_status_label.text = "Status: Web browsers use SDR output"
-		hdr_values_label.text = "Tone mapping and color controls remain available in SDR."
+		hdr_status_label.text = "Status: SDR output (Godot WebGL 2 renderer)"
+		hdr_values_label.text = "Your display may support HDR, but this web build outputs SDR. Tone mapping remains available."
 		return
 	var status := "Unsupported"
 	if hdr_output_active:
@@ -1230,7 +1300,8 @@ func _start_playing() -> void:
 	safe_root.visible = true
 	throttle_panel.visible = false
 	menu_panel.visible = false
-	gameplay_overlay.visible = current_game_mode == GameMode.SURVIVAL
+	gameplay_overlay.visible = true
+	gameplay_hud_panel.visible = current_game_mode == GameMode.SURVIVAL
 	flight_input.reset()
 
 
@@ -1243,6 +1314,7 @@ func _show_main_menu() -> void:
 	throttle_panel.visible = true
 	menu_panel.visible = true
 	gameplay_overlay.visible = false
+	gameplay_hud_panel.visible = false
 	main_menu_content.visible = true
 	settings_scroll.visible = false
 	game_over_content.visible = false
@@ -1314,25 +1386,43 @@ func _update_music_context() -> void:
 func _update_survival_hud() -> void:
 	if not is_instance_valid(distance_label):
 		return
-	var protection: float = survival_session.health.invulnerability_remaining
-	if protection > 0.0:
-		health_label.text = "SHIELD %.1fs  HEALTH %d / %d" % [
-			protection,
-			survival_session.health.current_health,
-			survival_session.health.maximum_health,
-		]
-	else:
-		health_label.text = "HEALTH %d / %d" % [
-			survival_session.health.current_health,
-			survival_session.health.maximum_health,
-		]
+	_update_health_display(
+		survival_session.health.current_health,
+		survival_session.health.maximum_health,
+		survival_session.health.invulnerability_remaining
+	)
+
+
+func _sync_gameplay_menu_visibility() -> void:
+	if not is_instance_valid(gameplay_menu_button):
+		return
+	if not PlatformCapabilities.should_show_inflight_menu():
+		gameplay_menu_button.visible = false
+		return
+	gameplay_menu_button.visible = interface_state == InterfaceState.PLAYING and not PlatformCapabilities.is_web_fullscreen()
 	distance_label.text = "DISTANCE %d m" % floori(survival_session.distance_traveled)
 	score_label.text = "SCORE %d" % survival_session.score
 
 
 func _on_survival_health_changed(current: int, maximum: int) -> void:
-	if is_instance_valid(health_label):
-		health_label.text = "HEALTH %d / %d" % [current, maximum]
+	_update_health_display(current, maximum, survival_session.health.invulnerability_remaining)
+
+
+func _update_health_display(current: int, maximum: int, protection: float) -> void:
+	if not is_instance_valid(health_label):
+		return
+	health_label.text = "HEALTH %d / %d" % [current, maximum]
+	var ratio := float(current) / float(maxi(maximum, 1))
+	var active_color := Color(0.28, 0.93, 0.62)
+	if ratio <= 0.4:
+		active_color = Color(1.0, 0.32, 0.30)
+	elif ratio <= 0.7:
+		active_color = Color(1.0, 0.74, 0.22)
+	for pip_index in health_pips.size():
+		health_pips[pip_index].color = active_color if pip_index < current else Color(0.18, 0.24, 0.30)
+	shield_label.visible = protection > 0.0
+	if protection > 0.0:
+		shield_label.text = "SHIELD %.1fs" % protection
 
 
 func _on_survival_damaged() -> void:

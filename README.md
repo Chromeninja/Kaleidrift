@@ -93,7 +93,8 @@ The current prototype uses:
 - **Drag anywhere outside the panels:** Horizontal and unlimited vertical steering
 - **Large centered throttle:** Forward speed
 - **H:** Hide the HUD on desktop
-- **Escape / Android Back:** Restore the HUD after it is hidden
+- **Escape / Android Back:** Return to the main menu on desktop Web and Android native builds
+- **Mobile Web Menu:** Return to the main menu outside fullscreen; browser/device Back exits fullscreen first
 - **R:** Reset the flight on desktop
 
 The interface scales and reflows around the device safe area in portrait and landscape.
@@ -161,7 +162,7 @@ The Web preset uses Godot's Compatibility renderer and a single-threaded WebAsse
 
 4. Open `http://localhost:8000/`.
 
-The browser build starts at Low quality when there is no saved preference, then retains the normal Automatic, Low, Medium, and High controls. Browser output is SDR. Tone mapping and color controls remain available, but HDR output controls are disabled. Music begins after the first keyboard, mouse, touch, or controller-button interaction because browsers require user activation for audio.
+The browser build starts at Low quality when there is no saved preference, then retains the normal Automatic, Low, Medium, and High controls. Browser output is SDR because Godot's current WebGL 2 Compatibility renderer does not provide HDR output. A device may support HDR in other browser content; tone mapping and color controls remain available here in SDR, while HDR output controls are disabled. Music begins after the first keyboard, mouse, touch, or controller-button interaction because browsers require user activation for audio. Web uses a browser-native Web Audio fallback because runtime procedural audio streams are not supported reliably by the Godot Web audio path.
 
 Current browser assumptions and limitations:
 

@@ -14,7 +14,7 @@ Use one row per test run. Keep screen brightness consistent and remove the phone
 
 Use the deployed GitHub Pages URL for final results. A local HTTP server is suitable for development checks but does not replace the deployed-path test.
 
-| Device / OS | Browser and version | Orientation / viewport | Mode | Quality | Avg FPS | Worst sustained FPS | Audio after first input | Resize / safe area | Settings persist | Shader artifacts | Console errors / notes |
+| Device / OS | Browser and version | Orientation / viewport | Mode | Quality | Avg FPS | Worst sustained FPS | Audio after first input | Fullscreen | Menu / safe area | Settings persist | Shader artifacts | Console errors / notes |
 |---|---|---|---|---|---:|---:|---|---|---|---|---|
 | Desktop | Chrome / Edge | 1280×720 | Endless | Auto |  |  |  |  |  |  |  |
 | Desktop | Firefox | 1280×720 | Survival | Auto |  |  |  |  |  |  |  |
@@ -25,11 +25,12 @@ For each browser, verify:
 
 - The loading screen completes at the repository Pages path, not only at a domain root.
 - Mouse drag, touch drag, throttle, keyboard reset, and HUD controls respond where available.
-- Endless and Survival start, run, and return to the menu correctly.
+- Endless and Survival start, run, and return to the menu correctly: Android uses native Back, desktop Web uses Escape, and mobile Web uses the in-flight Menu button outside fullscreen.
+- The web fullscreen button enters and exits fullscreen when supported, updates its icon, and fails gracefully when the browser denies or lacks the API.
 - Automatic, Low, Medium, and High quality selections resize the internal render target.
 - Reduced motion changes the visual response.
 - Music remains silent before browser activation, begins after the first interaction, and responds to its toggle and volume.
-- HDR output controls are disabled and the settings screen explains that Web output is SDR.
+- HDR output controls are disabled and the settings screen explains that Godot's WebGL renderer outputs SDR without claiming the device lacks HDR capability.
 - Settings survive a reload on the same site origin.
 - Window resizing and portrait/landscape changes preserve readable controls and reported safe areas.
 - The browser console contains no uncaught errors, shader compilation failures, or missing-file requests.
@@ -55,4 +56,4 @@ Record Endless and Survival as separate rows for every device. For Survival, als
 - Players can turn, reverse, branch, and revisit space without being pulled back to a course centerline.
 - Returning to a previously visited 3D cell regenerates the same obstacle layout.
 - Damage flash and vibration remain comfortable with reduced motion enabled.
-- Health, distance, score, throttle, and game-over actions remain readable in portrait and landscape.
+- Health pips, health text, shield countdown, distance, score, throttle, platform-appropriate navigation, and game-over actions remain readable in portrait and landscape.

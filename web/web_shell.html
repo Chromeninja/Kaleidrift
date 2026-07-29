@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>$GODOT_PROJECT_NAME</title>
+	$GODOT_HEAD_INCLUDE
+	<style>
+		html, body { margin: 0; min-height: 100%; overflow: hidden; background: #000; }
+		#game-shell { position: fixed; inset: 0; background: #000; }
+		#canvas { display: block; width: 100%; height: 100%; }
+		#fullscreen-button { position: fixed; z-index: 10; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid rgba(168, 226, 255, .72); border-radius: 10px; background: rgba(1, 12, 27, .82); color: #e8f8ff; cursor: pointer; box-shadow: 0 3px 12px rgba(0, 0, 0, .42); }
+		#fullscreen-button:hover, #fullscreen-button:focus-visible { background: rgba(13, 69, 96, .95); outline: 3px solid #fff; outline-offset: 2px; }
+		#fullscreen-button[hidden] { display: none; }
+		#fullscreen-button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+	</style>
+</head>
+<body>
+	<div id="game-shell">
+		<canvas id="canvas">Your browser does not support canvas.</canvas>
+		<button id="fullscreen-button" type="button" aria-label="Enter fullscreen" title="Enter fullscreen">
+			<svg id="enter-fullscreen-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg>
+			<svg id="exit-fullscreen-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M9 3v6H3M15 3v6h6M21 15h-6v6M3 15h6v6"/></svg>
+		</button>
+	</div>
+	<script src="$GODOT_URL"></script>
+	<script>
+		(() => {
+			let audioContext = null;
+			let audioGain = null;
+			let audioNodes = [];
+			window.kaleidriftAudioVolume = 0.7;
+			window.kaleidriftAudioEnabled = true;
+			window.kaleidriftAudioStart = (volume) => {
+				window.kaleidriftAudioSetVolume(volume);
+				if (!audioContext) {
+					audioContext = new (window.AudioContext || window.webkitAudioContext)();
+					audioGain = audioContext.createGain();
+					audioGain.connect(audioContext.destination);
+					const filter = audioContext.createBiquadFilter();
+					filter.type = 'lowpass'; filter.frequency.value = 1800; filter.connect(audioGain);
+					[110, 164.81, 220].forEach((frequency, index) => {
+						const oscillator = audioContext.createOscillator();
+						oscillator.type = index === 2 ? 'sine' : 'triangle';
+						oscillator.frequency.value = frequency;
+						oscillator.detune.value = index * 5 - 5;
+						oscillator.connect(filter); oscillator.start(); audioNodes.push(oscillator);
+					});
+				}
+				if (audioContext.state === 'suspended') audioContext.resume();
+				window.kaleidriftAudioSetEnabled(window.kaleidriftAudioEnabled);
+			};
+			window.kaleidriftAudioSetEnabled = (enabled) => {
+				window.kaleidriftAudioEnabled = enabled;
+				if (audioGain) audioGain.gain.value = enabled ? window.kaleidriftAudioVolume * 0.055 : 0;
+			};
+			window.kaleidriftAudioSetVolume = (volume) => {
+				window.kaleidriftAudioVolume = Math.max(0, Math.min(1, Number(volume) || 0));
+				if (audioGain && window.kaleidriftAudioEnabled) audioGain.gain.value = window.kaleidriftAudioVolume * 0.055;
+			};
+			window.kaleidriftAudioStop = (fadeSeconds) => {
+				if (!audioGain) return;
+				const now = audioContext.currentTime;
+				audioGain.gain.cancelScheduledValues(now);
+				audioGain.gain.setTargetAtTime(0, now, Math.max(0.01, Number(fadeSeconds) || 0.1) / 3);
+			};
+			window.addEventListener('pointerdown', () => window.kaleidriftAudioStart(window.kaleidriftAudioVolume), { once: true, capture: true });
+			window.addEventListener('keydown', () => window.kaleidriftAudioStart(window.kaleidriftAudioVolume), { once: true, capture: true });
+			window.addEventListener('touchstart', () => window.kaleidriftAudioStart(window.kaleidriftAudioVolume), { once: true, capture: true });
+			const shell = document.getElementById('game-shell');
+			window.kaleidriftIsFullscreen = () => document.fullscreenElement === shell;
+			const button = document.getElementById('fullscreen-button');
+			const enterIcon = document.getElementById('enter-fullscreen-icon');
+			const exitIcon = document.getElementById('exit-fullscreen-icon');
+			const updateFullscreenControl = () => {
+				const active = document.fullscreenElement === shell;
+				button.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+				button.title = active ? 'Exit fullscreen' : 'Enter fullscreen';
+				enterIcon.hidden = active;
+				exitIcon.hidden = !active;
+			};
+			if (!document.fullscreenEnabled || !shell.requestFullscreen) {
+				button.hidden = true;
+			} else {
+				button.addEventListener('click', async (event) => {
+					event.stopPropagation();
+					try {
+						if (document.fullscreenElement) await document.exitFullscreen();
+						else await shell.requestFullscreen();
+					} catch (_error) { updateFullscreenControl(); }
+				});
+				document.addEventListener('fullscreenchange', updateFullscreenControl);
+				document.addEventListener('fullscreenerror', updateFullscreenControl);
+				updateFullscreenControl();
+			}
+			const engine = new Engine($GODOT_CONFIG);
+			engine.startGame({ canvas: document.getElementById('canvas') });
+		})();
+	</script>
+</body>
+</html>
