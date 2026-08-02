@@ -30,7 +30,7 @@ func _run() -> void:
 	assert(main_scene.shield_label.text.contains("SHIELD"))
 	assert(main_scene.health_pips.size() == 5)
 	assert(main_scene.music_controller.context.game_mode == MusicContext.Mode.SURVIVAL)
-	var obstacle_build_count := main_scene.survival_session.world.shader_obstacle_build_count
+	var obstacle_build_count: int = main_scene.survival_session.world.shader_obstacle_build_count
 	main_scene.survival_session.get_shader_obstacles()
 	main_scene.survival_session.get_shader_obstacles()
 	assert(main_scene.survival_session.world.shader_obstacle_build_count == obstacle_build_count)
