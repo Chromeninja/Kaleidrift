@@ -28,6 +28,8 @@ jobs:
         run: godot --headless --editor --path . --quit-after 5
       - name: Validate project startup
         run: godot --headless --rendering-method gl_compatibility --path . --quit-after 1
+      - name: Validate adaptive Web quality
+        run: godot --headless --path . --script res://scripts/tests/adaptive_quality_test.gd
       - name: Export single-threaded Web build
         run: |
           mkdir -p build/web

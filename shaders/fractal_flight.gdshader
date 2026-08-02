@@ -232,7 +232,16 @@ float world_sdf_base(vec3 point) {
 	return min(gyroid_sdf(point), folded);
 }
 
-float world_sdf(vec3 point) {
+float corridor_activation_for_frame() {
+	float forward_clearance = world_sdf_base(camera_position + camera_forward * corridor_start);
+	return 1.0 - smoothstep(
+		0.0,
+		corridor_trigger_distance,
+		max(forward_clearance, 0.0)
+	);
+}
+
+float world_sdf(vec3 point, float corridor_activation) {
 	if (survival_mode) {
 		return survival_world_sdf(point);
 	}
@@ -241,12 +250,6 @@ float world_sdf(vec3 point) {
 	// Keep the opening local to the player's intended line of travel. The old
 	// camera-to-10-unit capsule was always active and made the world look hollow
 	// long before the player was close enough to need an opening.
-	float forward_clearance = world_sdf_base(camera_position + camera_forward * corridor_start);
-	float corridor_activation = 1.0 - smoothstep(
-		0.0,
-		corridor_trigger_distance,
-		max(forward_clearance, 0.0)
-	);
 	vec3 corridor_start_point = camera_position + camera_forward * corridor_start;
 	vec3 corridor_end = camera_position + camera_forward * (corridor_start + corridor_length);
 	float corridor = capsule_sdf(
@@ -259,13 +262,13 @@ float world_sdf(vec3 point) {
 	return mix(structure, opened_structure, corridor_activation);
 }
 
-vec3 estimate_normal(vec3 point) {
+vec3 estimate_normal(vec3 point, float corridor_activation) {
 	vec2 e = vec2(EPSILON, -EPSILON);
 	return normalize(
-		e.xyy * world_sdf(point + e.xyy)
-		+ e.yyx * world_sdf(point + e.yyx)
-		+ e.yxy * world_sdf(point + e.yxy)
-		+ e.xxx * world_sdf(point + e.xxx)
+		e.xyy * world_sdf(point + e.xyy, corridor_activation)
+		+ e.yyx * world_sdf(point + e.yyx, corridor_activation)
+		+ e.yxy * world_sdf(point + e.yxy, corridor_activation)
+		+ e.xxx * world_sdf(point + e.xxx, corridor_activation)
 	);
 }
 
@@ -335,13 +338,19 @@ void fragment() {
 	float glow_accumulator = 0.0;
 	bool hit = false;
 	vec3 point = camera_position;
+	// This value is constant for the entire ray. Previously its full fractal SDF
+	// was recomputed for every march step and every normal sample.
+	float corridor_activation = 0.0;
+	if (!survival_mode) {
+		corridor_activation = corridor_activation_for_frame();
+	}
 
 	for (int step_index = 0; step_index < 112; step_index++) {
 		if (step_index >= max_steps || distance_traveled >= max_distance) {
 			break;
 		}
 		point = camera_position + ray_direction * distance_traveled;
-		float distance_to_surface = world_sdf(point);
+		float distance_to_surface = world_sdf(point, corridor_activation);
 		glow_accumulator += exp(-abs(distance_to_surface) * 2.4) * 0.006;
 		if (distance_to_surface < EPSILON * max(1.0, distance_traveled * 0.10)) {
 			hit = true;
@@ -355,7 +364,7 @@ void fragment() {
 	vec3 color = mix(background_bottom, background_top, clamp(UV.y, 0.0, 1.0));
 
 	if (hit) {
-		vec3 normal = estimate_normal(point);
+		vec3 normal = estimate_normal(point, corridor_activation);
 		color = region_color(point, distance_traveled, normal);
 		float fog = 1.0 - exp(-distance_traveled * 0.032);
 		color = mix(color, background_top, fog);

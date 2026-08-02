@@ -28,6 +28,8 @@ var world_variation_seed := 0.0
 var fractal_level := FractalLevelsScript.Type.FOLD
 var fractal_iterations := 6
 var current_cell := EMPTY_CELL
+var neighborhood_revision := 0
+var shader_obstacle_build_count := 0
 
 static func variation_seed_for_world_seed(seed: int) -> float:
 	return fposmod(float(abs(seed)), 10000.0)
@@ -302,6 +304,7 @@ func collides_with_world_swept_sphere(
 
 
 func get_shader_obstacles(player_position: Vector3) -> Array[Vector4]:
+	shader_obstacle_build_count += 1
 	var candidates := obstacles.duplicate()
 	candidates.sort_custom(
 		func(a: CourseObstacle, b: CourseObstacle) -> bool:
@@ -369,6 +372,7 @@ func _rebuild_neighborhood() -> void:
 			for z_offset in range(-NEIGHBOR_RADIUS, NEIGHBOR_RADIUS + 1):
 				var cell := current_cell + Vector3i(x_offset, y_offset, z_offset)
 				_spawn_cell_obstacle(cell)
+	neighborhood_revision += 1
 
 
 func _spawn_cell_obstacle(cell: Vector3i) -> void:

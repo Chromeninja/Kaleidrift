@@ -26,6 +26,9 @@ var recovery_remaining := 0.0
 var active := false
 var fractal_level := FractalLevelsScript.Type.FOLD
 var fractal_iterations := 6
+var _cached_shader_obstacles: Array[Vector4] = []
+var _cached_obstacle_position := Vector3(INF, INF, INF)
+var _cached_neighborhood_revision := -1
 
 
 func _ready() -> void:
@@ -61,6 +64,7 @@ func start(new_fractal_level: int = FractalLevelsScript.Type.FOLD, new_fractal_i
 	health.reset()
 	health.grant_invulnerability(SPAWN_GRACE_SECONDS)
 	spawn_forward = world.find_safest_direction(position, PLAYER_RADIUS)
+	_invalidate_shader_obstacles()
 
 
 func stop() -> void:
@@ -126,7 +130,21 @@ func physics_step(delta: float, forward_speed: float, forward_direction: Vector3
 
 
 func get_shader_obstacles() -> Array[Vector4]:
-	return world.get_shader_obstacles(position)
+	if (
+		_cached_shader_obstacles.is_empty()
+		or _cached_neighborhood_revision != world.neighborhood_revision
+		or position.distance_squared_to(_cached_obstacle_position) >= 0.0625
+	):
+		_cached_shader_obstacles = world.get_shader_obstacles(position)
+		_cached_obstacle_position = position
+		_cached_neighborhood_revision = world.neighborhood_revision
+	return _cached_shader_obstacles
+
+
+func _invalidate_shader_obstacles() -> void:
+	_cached_shader_obstacles.clear()
+	_cached_obstacle_position = Vector3(INF, INF, INF)
+	_cached_neighborhood_revision = -1
 
 
 func get_spawn_forward() -> Vector3:

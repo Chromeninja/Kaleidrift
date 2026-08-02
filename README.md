@@ -307,12 +307,15 @@ KaleiDrift uses one Godot 4.7.1 project and shared gameplay code for Android, Wi
 
 ```bash
 godot --headless --path . --quit-after 1
+godot --headless --path . --script res://scripts/tests/adaptive_quality_test.gd
 godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
 godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
 godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
 godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
 godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
 ```
+
+Use [`doc/WEB_PERFORMANCE_BENCHMARK.md`](doc/WEB_PERFORMANCE_BENCHMARK.md) for repeatable Chromium and Firefox frame-time testing.
 
 Pull requests validate startup, native smoke/integration tests, and Web/Windows exports. Pushes to `main` run `.github/workflows/deploy-web.yml`, which deploys only `build/web`; Pages must be enabled by the repository owner. Releases are created only from semantic `v*.*.*` tags and currently attach a Windows ZIP. Android signing and iOS distribution require owner-provided credentials and platform setup.
 

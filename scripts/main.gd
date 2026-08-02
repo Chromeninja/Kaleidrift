@@ -1,9 +1,13 @@
 extends Node
 
 const SHADER_PATH := "res://shaders/fractal_flight.gdshader"
-const TARGET_FRAME_MS := 1000.0 / 60.0
-const AUTO_EVALUATION_SECONDS := 2.0
-const AUTO_UPGRADE_SECONDS := 8.0
+const NATIVE_TARGET_FRAME_MS := 1000.0 / 60.0
+const WEB_TARGET_FRAME_MS := 1000.0 / 30.0
+const METRICS_UPDATE_SECONDS := 0.25
+const HUD_UPDATE_SECONDS := 0.10
+const MUSIC_CONTEXT_UPDATE_SECONDS := 0.10
+const CONTROLLER_UI_UPDATE_SECONDS := 0.25
+const HDR_UPDATE_SECONDS := 0.25
 const SETTINGS_PATH := "user://settings.cfg"
 const CONTROLLER_LOG_PATH := "user://controller_input.log"
 const SETTINGS_SECTION := "settings"
@@ -18,13 +22,13 @@ const ProceduralMusicControllerScript := preload("res://scripts/audio/procedural
 const PlatformCapabilitiesScript := preload("res://scripts/platform/platform_capabilities.gd")
 const FlightInputAdapterScript := preload("res://scripts/input/flight_input_adapter.gd")
 const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
+const AdaptiveQualityControllerScript := preload("res://scripts/performance/adaptive_quality_controller.gd")
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
-const WEB_DEFAULT_QUALITY := 0
 const QUALITY_PRESETS := [
-	{"name": "Low", "render_scale": 0.45, "steps": 44, "detail": 3, "fractal_iterations": 4, "distance": 46.0},
-	{"name": "Medium", "render_scale": 0.64, "steps": 64, "detail": 4, "fractal_iterations": 6, "distance": 62.0},
-	{"name": "High", "render_scale": 1.0, "steps": 84, "detail": 5, "fractal_iterations": 8, "distance": 78.0}
+	{"name": "Low", "base_render_scale": 0.45, "minimum_auto_scale": 0.32, "steps": 44, "detail": 3, "fractal_iterations": 4, "distance": 46.0},
+	{"name": "Medium", "base_render_scale": 0.64, "minimum_auto_scale": 0.45, "steps": 64, "detail": 4, "fractal_iterations": 6, "distance": 62.0},
+	{"name": "High", "base_render_scale": 1.0, "minimum_auto_scale": 0.64, "steps": 84, "detail": 5, "fractal_iterations": 8, "distance": 78.0}
 ]
 
 enum InterfaceState {
@@ -52,6 +56,7 @@ var settings_content: VBoxContainer
 var game_over_content: VBoxContainer
 var title_label: Label
 var metrics_label: Label
+var performance_label: Label
 var status_label: Label
 var throttle_label: Label
 var speed_slider: VSlider
@@ -104,10 +109,9 @@ var camera_orientation := Quaternion.IDENTITY
 var speed := 2.5
 var elapsed := 0.0
 var current_quality := 1
+var manual_quality := 1
 var automatic_quality := true
-var evaluation_elapsed := 0.0
-var stable_fast_elapsed := 0.0
-var frame_ms_samples: Array[float] = []
+var quality_controller: AdaptiveQualityController
 var flight_input: FlightInputAdapter
 var interface_state := InterfaceState.MENU
 var current_game_mode := GameMode.ENDLESS
@@ -136,12 +140,31 @@ var survival_session
 var music_controller: ProceduralMusicController
 var damage_flash_strength := 0.0
 var _fullscreen_sync_elapsed := 0.0
+var _metrics_elapsed := 0.0
+var _hud_elapsed := 0.0
+var _music_context_elapsed := 0.0
+var _controller_ui_elapsed := 0.0
+var _hdr_update_elapsed := 0.0
+var _last_shader_fractal_type := -1
+var _last_shader_fractal_iterations := -1
+var _last_shader_survival_mode := false
+var _last_shader_world_seed := NAN
+var _last_shader_obstacles: Array[Vector4] = []
+var settings_save_count := 0
+var _application_focused := true
 
 
 func _ready() -> void:
 	current_quality = PlatformCapabilities.default_quality()
+	manual_quality = current_quality
 	flight_input = FlightInputAdapterScript.new()
 	_load_settings()
+	quality_controller = AdaptiveQualityControllerScript.new(
+		QUALITY_PRESETS,
+		WEB_TARGET_FRAME_MS if _is_web_platform() else NATIVE_TARGET_FRAME_MS,
+		current_quality
+	)
+	quality_controller.reset(current_quality, automatic_quality)
 	flight_input.deadzone = _controller_deadzone_setting
 	flight_input.outer_deadzone = _controller_outer_deadzone_setting
 	flight_input.response_curve = _controller_response_curve_setting
@@ -160,6 +183,8 @@ func _ready() -> void:
 		_start_music()
 	_build_render_pipeline()
 	_build_hud()
+	if is_instance_valid(quality_selector):
+		quality_selector.select(0 if automatic_quality else manual_quality + 1)
 	_resize_render_target()
 	_apply_quality(current_quality)
 	_apply_hdr_settings()
@@ -180,11 +205,18 @@ func _ready() -> void:
 	get_window().output_max_linear_value_changed.connect(_on_output_max_linear_value_changed)
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	status_label.text = "Drag anywhere to steer • Throttle centered below"
+	_sync_render_activity()
 
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
 		_handle_back_command()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_application_focused = false
+		_sync_render_activity()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_application_focused = true
+		_sync_render_activity()
 
 
 func _physics_process(delta: float) -> void:
@@ -207,7 +239,9 @@ func _process(delta: float) -> void:
 			_record_controller_diagnostic("keyboard steering applied")
 			_last_steering_source = "keyboard"
 			_apply_steering_delta(keyboard_steering)
-	if settings_visible:
+	_controller_ui_elapsed += delta
+	if settings_visible and _controller_ui_elapsed >= CONTROLLER_UI_UPDATE_SECONDS:
+		_controller_ui_elapsed = 0.0
 		_update_controller_ui()
 	elapsed += delta
 	var basis := Basis(camera_orientation).orthonormalized()
@@ -222,38 +256,53 @@ func _process(delta: float) -> void:
 	shader_material.set_shader_parameter("camera_up", up)
 	shader_material.set_shader_parameter("elapsed_time", elapsed)
 	var fractal_info := FractalLevelsScript.region_info(selected_fractal_level, camera_position.z, MUSIC_JOURNEY_SEED)
-	shader_material.set_shader_parameter("fractal_type", int(fractal_info["active"]))
-	shader_material.set_shader_parameter("fractal_iterations", int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
-	shader_material.set_shader_parameter(
-		"world_variation_seed",
-		survival_session.world.world_variation_seed if current_game_mode == GameMode.SURVIVAL else fposmod(float(MUSIC_JOURNEY_SEED), 10000.0)
-	)
+	var active_fractal_type := int(fractal_info["active"])
+	var active_fractal_iterations := int(QUALITY_PRESETS[current_quality]["fractal_iterations"])
+	var active_world_seed: float = survival_session.world.world_variation_seed if current_game_mode == GameMode.SURVIVAL else fposmod(float(MUSIC_JOURNEY_SEED), 10000.0)
+	if active_fractal_type != _last_shader_fractal_type:
+		shader_material.set_shader_parameter("fractal_type", active_fractal_type)
+		_last_shader_fractal_type = active_fractal_type
+	if active_fractal_iterations != _last_shader_fractal_iterations:
+		shader_material.set_shader_parameter("fractal_iterations", active_fractal_iterations)
+		_last_shader_fractal_iterations = active_fractal_iterations
+	if is_nan(_last_shader_world_seed) or not is_equal_approx(active_world_seed, _last_shader_world_seed):
+		shader_material.set_shader_parameter("world_variation_seed", active_world_seed)
+		_last_shader_world_seed = active_world_seed
 	if current_game_mode == GameMode.SURVIVAL and is_instance_valid(survival_session):
-		survival_session.set_fractal_level(int(fractal_info["active"]))
-		survival_session.set_fractal_iterations(int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
-	shader_material.set_shader_parameter("survival_mode", current_game_mode == GameMode.SURVIVAL)
+		survival_session.set_fractal_level(active_fractal_type)
+		survival_session.set_fractal_iterations(active_fractal_iterations)
+	var survival_mode := current_game_mode == GameMode.SURVIVAL
+	if survival_mode != _last_shader_survival_mode:
+		shader_material.set_shader_parameter("survival_mode", survival_mode)
+		_last_shader_survival_mode = survival_mode
 	if current_game_mode == GameMode.SURVIVAL:
-		shader_material.set_shader_parameter(
-			"survival_obstacles",
-			survival_session.get_shader_obstacles()
-		)
+		var shader_obstacles: Array[Vector4] = survival_session.get_shader_obstacles()
+		if shader_obstacles != _last_shader_obstacles:
+			shader_material.set_shader_parameter("survival_obstacles", shader_obstacles)
+			_last_shader_obstacles = shader_obstacles.duplicate()
+	_hud_elapsed += delta
+	if current_game_mode == GameMode.SURVIVAL and _hud_elapsed >= HUD_UPDATE_SECONDS:
+		_hud_elapsed = 0.0
 		_update_survival_hud()
-	_update_music_context()
+	_music_context_elapsed += delta
+	if _music_context_elapsed >= MUSIC_CONTEXT_UPDATE_SECONDS:
+		_music_context_elapsed = 0.0
+		_update_music_context()
 	damage_flash_strength = maxf(damage_flash_strength - delta * 2.8, 0.0)
 	if is_instance_valid(damage_flash):
 		damage_flash.color = Color(1.0, 0.12, 0.18, damage_flash_strength * 0.42)
-	if hdr_output_active:
+	_hdr_update_elapsed += delta
+	if hdr_output_active and _hdr_update_elapsed >= HDR_UPDATE_SECONDS:
+		_hdr_update_elapsed = 0.0
 		_update_output_max_linear_value(get_window().get_output_max_linear_value())
 
 	var frame_ms := delta * 1000.0
-	frame_ms_samples.append(frame_ms)
-	if frame_ms_samples.size() > 120:
-		frame_ms_samples.pop_front()
-	evaluation_elapsed += delta
-	if automatic_quality and evaluation_elapsed >= AUTO_EVALUATION_SECONDS:
-		_evaluate_automatic_quality()
-		evaluation_elapsed = 0.0
-	_update_metrics(frame_ms)
+	if interface_state == InterfaceState.PLAYING and _application_focused and quality_controller.sample(delta, frame_ms):
+		_apply_resolved_quality()
+	_metrics_elapsed += delta
+	if _metrics_elapsed >= METRICS_UPDATE_SECONDS:
+		_metrics_elapsed = 0.0
+		_update_metrics(frame_ms)
 
 
 func _input(event: InputEvent) -> void:
@@ -683,6 +732,11 @@ func _build_gameplay_overlay() -> void:
 	gameplay_menu_button.pressed.connect(_show_main_menu)
 	gameplay_overlay.add_child(gameplay_menu_button)
 	gameplay_menu_button.visible = PlatformCapabilities.should_show_inflight_menu()
+	performance_label = Label.new()
+	performance_label.name = "PerformanceDiagnostics"
+	performance_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	performance_label.add_theme_color_override("font_color", Color(0.72, 0.90, 1.0, 0.82))
+	gameplay_overlay.add_child(performance_label)
 
 	gameplay_hud_panel = PanelContainer.new()
 	gameplay_hud_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -762,8 +816,14 @@ func _on_speed_changed(value: float) -> void:
 
 func _on_quality_selected(index: int) -> void:
 	automatic_quality = index == 0
-	current_quality = 1 if automatic_quality else clamp(index - 1, 0, QUALITY_PRESETS.size() - 1)
-	_apply_quality(current_quality)
+	if automatic_quality:
+		current_quality = PlatformCapabilities.default_quality()
+		quality_controller.reset(current_quality, true)
+	else:
+		manual_quality = clampi(index - 1, 0, QUALITY_PRESETS.size() - 1)
+		current_quality = manual_quality
+		quality_controller.reset(current_quality, false)
+	_apply_resolved_quality()
 	_save_settings()
 
 func _on_fractal_selected(index: int) -> void:
@@ -981,6 +1041,10 @@ func _update_safe_layout() -> void:
 	gameplay_menu_button.offset_top = float(safe_rect.position.y + padding)
 	gameplay_menu_button.offset_right = gameplay_menu_button.offset_left + gameplay_menu_button.custom_minimum_size.x
 	gameplay_menu_button.offset_bottom = gameplay_menu_button.offset_top + touch_height
+	performance_label.offset_left = float(safe_rect.position.x + padding)
+	performance_label.offset_top = float(safe_rect.end.y - 46.0 * ui_scale)
+	performance_label.offset_right = performance_label.offset_left + 360.0 * ui_scale
+	performance_label.offset_bottom = float(safe_rect.end.y - padding)
 	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
 	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	music_toggle.custom_minimum_size = Vector2(0.0, touch_height)
@@ -1003,6 +1067,7 @@ func _update_safe_layout() -> void:
 	game_over_title.add_theme_font_size_override("font_size", roundi(22.0 * ui_scale))
 	game_over_result.add_theme_font_size_override("font_size", roundi(16.0 * ui_scale))
 	metrics_label.add_theme_font_size_override("font_size", body_font)
+	performance_label.add_theme_font_size_override("font_size", roundi(11.0 * ui_scale))
 	status_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
 	quality_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
 	throttle_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
@@ -1039,7 +1104,11 @@ func _resize_render_target() -> void:
 	if not is_instance_valid(render_viewport):
 		return
 	var window_size := get_viewport().get_visible_rect().size
-	var scale := float(QUALITY_PRESETS[current_quality]["render_scale"])
+	var scale := (
+		quality_controller.resolved_scale
+		if is_instance_valid(quality_controller)
+		else float(QUALITY_PRESETS[current_quality]["base_render_scale"])
+	)
 	var target := Vector2i(maxi(1, roundi(window_size.x * scale)), maxi(1, roundi(window_size.y * scale)))
 	render_viewport.size = target
 	render_rect.size = Vector2(target)
@@ -1048,6 +1117,8 @@ func _resize_render_target() -> void:
 
 func _apply_quality(index: int) -> void:
 	current_quality = clamp(index, 0, QUALITY_PRESETS.size() - 1)
+	if is_instance_valid(quality_controller):
+		quality_controller.resolved_tier = current_quality
 	var preset: Dictionary = QUALITY_PRESETS[current_quality]
 	shader_material.set_shader_parameter("max_steps", int(preset["steps"]))
 	shader_material.set_shader_parameter("detail_iterations", int(preset["detail"]))
@@ -1055,7 +1126,10 @@ func _apply_quality(index: int) -> void:
 	_resize_render_target()
 	if is_instance_valid(status_label):
 		status_label.text = "Quality: %s" % str(preset["name"])
-	_save_settings()
+
+
+func _apply_resolved_quality() -> void:
+	_apply_quality(quality_controller.resolved_tier)
 
 
 func _platform_supports_hdr_output() -> bool:
@@ -1183,9 +1257,16 @@ func _load_settings() -> void:
 	if config.load(SETTINGS_PATH) != OK:
 		return
 	hdr_mode = clampi(int(config.get_value(SETTINGS_SECTION, "hdr_mode", HDR_MODE_AUTO)), HDR_MODE_AUTO, HDR_MODE_OFF)
-	current_quality = clampi(int(config.get_value(SETTINGS_SECTION, "quality", current_quality)), 0, QUALITY_PRESETS.size() - 1)
+	var saved_quality := AdaptiveQualityControllerScript.resolve_saved_quality(
+		config.get_value(SETTINGS_SECTION, "quality", manual_quality),
+		config.get_value(SETTINGS_SECTION, "automatic_quality", automatic_quality),
+		PlatformCapabilities.default_quality(),
+		QUALITY_PRESETS.size()
+	)
+	manual_quality = int(saved_quality["manual_tier"])
 	selected_fractal_level = clampi(int(config.get_value(SETTINGS_SECTION, "fractal_level", FractalLevelsScript.Type.FOLD)), FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED)
-	automatic_quality = bool(config.get_value(SETTINGS_SECTION, "automatic_quality", automatic_quality))
+	automatic_quality = bool(saved_quality["automatic"])
+	current_quality = int(saved_quality["resolved_tier"])
 	_reduced_motion_setting = bool(config.get_value(SETTINGS_SECTION, "reduced_motion", false))
 	_music_enabled_setting = bool(config.get_value(SETTINGS_SECTION, "music_enabled", true))
 	_music_volume_setting = clampf(float(config.get_value(SETTINGS_SECTION, "music_volume", 0.7)), 0.0, 1.0)
@@ -1203,6 +1284,7 @@ func _load_settings() -> void:
 
 
 func _save_settings() -> void:
+	settings_save_count += 1
 	var config := ConfigFile.new()
 	config.set_value(SETTINGS_SECTION, "hdr_mode", hdr_mode)
 	config.set_value(SETTINGS_SECTION, "tone_map_mode", tone_map_mode)
@@ -1210,7 +1292,7 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "peak_brightness_limit", peak_brightness_limit)
 	config.set_value(SETTINGS_SECTION, "highlight_intensity", highlight_intensity)
 	config.set_value(SETTINGS_SECTION, "gamut_intensity", gamut_intensity)
-	config.set_value(SETTINGS_SECTION, "quality", current_quality)
+	config.set_value(SETTINGS_SECTION, "quality", manual_quality)
 	config.set_value(SETTINGS_SECTION, "fractal_level", selected_fractal_level)
 	config.set_value(SETTINGS_SECTION, "automatic_quality", automatic_quality)
 	config.set_value(SETTINGS_SECTION, "reduced_motion", reduced_motion_toggle.button_pressed if is_instance_valid(reduced_motion_toggle) else false)
@@ -1223,32 +1305,42 @@ func _save_settings() -> void:
 	config.save(SETTINGS_PATH)
 
 
-func _evaluate_automatic_quality() -> void:
-	if frame_ms_samples.is_empty():
-		return
-	var sorted_samples := frame_ms_samples.duplicate()
-	sorted_samples.sort()
-	var percentile_index := mini(sorted_samples.size() - 1, int(float(sorted_samples.size() - 1) * 0.90))
-	var p90_ms: float = sorted_samples[percentile_index]
-	if p90_ms > 19.5 and current_quality > 0:
-		stable_fast_elapsed = 0.0
-		_apply_quality(current_quality - 1)
-	elif p90_ms < 15.2 and current_quality < QUALITY_PRESETS.size() - 1:
-		stable_fast_elapsed += AUTO_EVALUATION_SECONDS
-		if stable_fast_elapsed >= AUTO_UPGRADE_SECONDS:
-			stable_fast_elapsed = 0.0
-			_apply_quality(current_quality + 1)
-	else:
-		stable_fast_elapsed = 0.0
-
-
 func _update_metrics(latest_frame_ms: float) -> void:
 	var preset: Dictionary = QUALITY_PRESETS[current_quality]
-	var target_state := "PASS" if latest_frame_ms <= TARGET_FRAME_MS else "OVER"
-	metrics_label.text = "%d FPS • %.1f ms • %s\n%s • %d×%d • %d steps" % [
-		Engine.get_frames_per_second(), latest_frame_ms, target_state, str(preset["name"]),
-		render_viewport.size.x, render_viewport.size.y, int(preset["steps"])
+	var target_state := "PASS" if quality_controller.get_percentile(0.95) <= quality_controller.target_frame_ms else "OVER"
+	var metrics_text := "%d FPS • %.1f ms latest • %s\np90 %.1f • p95 %.1f • %s%s\n%d×%d • %.2f scale • %d steps • %s" % [
+		Engine.get_frames_per_second(), latest_frame_ms, target_state,
+		quality_controller.get_percentile(0.90), quality_controller.get_percentile(0.95),
+		str(preset["name"]), " AUTO" if automatic_quality else " MANUAL",
+		render_viewport.size.x, render_viewport.size.y, quality_controller.resolved_scale,
+		int(preset["steps"]), FractalLevelsScript.display_name(_last_shader_fractal_type)
 	]
+	metrics_label.text = metrics_text
+	performance_label.text = "%d FPS • p95 %.1f ms • %s • %.2f×\n%d×%d • %d steps • %s" % [
+		Engine.get_frames_per_second(), quality_controller.get_percentile(0.95), str(preset["name"]),
+		quality_controller.resolved_scale, render_viewport.size.x, render_viewport.size.y,
+		int(preset["steps"]), FractalLevelsScript.display_name(_last_shader_fractal_type)
+	]
+
+
+func get_performance_p90_ms() -> float:
+	return quality_controller.get_percentile(0.90)
+
+
+func get_performance_p95_ms() -> float:
+	return quality_controller.get_percentile(0.95)
+
+
+func get_resolved_render_scale() -> float:
+	return quality_controller.resolved_scale
+
+
+func get_resolved_quality_tier() -> int:
+	return quality_controller.resolved_tier
+
+
+func is_quality_transition_cooling_down() -> bool:
+	return quality_controller.is_cooling_down()
 
 
 func _start_endless() -> void:
@@ -1303,6 +1395,7 @@ func _start_playing() -> void:
 	gameplay_overlay.visible = true
 	gameplay_hud_panel.visible = current_game_mode == GameMode.SURVIVAL
 	flight_input.reset()
+	_sync_render_activity()
 
 
 func _show_main_menu() -> void:
@@ -1319,6 +1412,7 @@ func _show_main_menu() -> void:
 	settings_scroll.visible = false
 	game_over_content.visible = false
 	flight_input.reset()
+	_sync_render_activity()
 
 
 func _show_settings() -> void:
@@ -1391,6 +1485,8 @@ func _update_survival_hud() -> void:
 		survival_session.health.maximum_health,
 		survival_session.health.invulnerability_remaining
 	)
+	distance_label.text = "DISTANCE %d m" % floori(survival_session.distance_traveled)
+	score_label.text = "SCORE %d" % survival_session.score
 
 
 func _sync_gameplay_menu_visibility() -> void:
@@ -1400,8 +1496,16 @@ func _sync_gameplay_menu_visibility() -> void:
 		gameplay_menu_button.visible = false
 		return
 	gameplay_menu_button.visible = interface_state == InterfaceState.PLAYING and not PlatformCapabilities.is_web_fullscreen()
-	distance_label.text = "DISTANCE %d m" % floori(survival_session.distance_traveled)
-	score_label.text = "SCORE %d" % survival_session.score
+
+
+func _sync_render_activity() -> void:
+	if not is_instance_valid(render_viewport):
+		return
+	render_viewport.render_target_update_mode = (
+		SubViewport.UPDATE_ALWAYS
+		if interface_state == InterfaceState.PLAYING and _application_focused
+		else SubViewport.UPDATE_ONCE
+	)
 
 
 func _on_survival_health_changed(current: int, maximum: int) -> void:
@@ -1442,3 +1546,4 @@ func _on_survival_game_over(distance: float, final_score: int) -> void:
 	settings_scroll.visible = false
 	game_over_content.visible = true
 	game_over_result.text = "Distance: %d m\nScore: %d" % [floori(distance), final_score]
+	_sync_render_activity()

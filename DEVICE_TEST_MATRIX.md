@@ -14,12 +14,12 @@ Use one row per test run. Keep screen brightness consistent and remove the phone
 
 Use the deployed GitHub Pages URL for final results. A local HTTP server is suitable for development checks but does not replace the deployed-path test.
 
-| Device / OS | Browser and version | Orientation / viewport | Mode | Quality | Avg FPS | Worst sustained FPS | Audio after first input | Fullscreen | Menu / safe area | Settings persist | Shader artifacts | Console errors / notes |
-|---|---|---|---|---|---:|---:|---|---|---|---|---|
-| Desktop | Chrome / Edge | 1280×720 | Endless | Auto |  |  |  |  |  |  |  |
-| Desktop | Firefox | 1280×720 | Survival | Auto |  |  |  |  |  |  |  |
-| macOS / iOS | Safari | Landscape | Endless | Low |  |  |  |  |  |  |  |
-| Mobile | Chrome or Safari | Portrait | Survival | Low |  |  |  |  |  |  |  |
+| Device / OS | Browser and version | Orientation / viewport | Mode | Quality / scale | Avg FPS | Worst sustained FPS | p90 ms | p95 ms | Audio after first input | Fullscreen | Menu / safe area | Settings persist | Shader artifacts | Console errors / notes |
+|---|---|---|---|---|---:|---:|---:|---:|---|---|---|---|---|---|
+| Desktop | Chrome / Edge | 1280×720 | Endless | Auto |  |  |  |  |  |  |  |  |  |  |
+| Desktop | Firefox | 1280×720 | Survival | Auto |  |  |  |  |  |  |  |  |  |  |
+| macOS / iOS | Safari | Landscape | Endless | Low |  |  |  |  |  |  |  |  |  |  |
+| Mobile | Chrome or Safari | Portrait | Survival | Low |  |  |  |  |  |  |  |  |  |  |
 
 For each browser, verify:
 
