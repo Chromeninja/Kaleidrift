@@ -219,9 +219,12 @@ func _notification(what: int) -> void:
 		_handle_back_command()
 	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		_application_focused = false
+		flight_input.reset()
+		_record_controller_diagnostic("application focus out; controller reset")
 		_sync_render_activity()
 	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
 		_application_focused = true
+		_record_controller_diagnostic("application focus in")
 		_sync_render_activity()
 
 
@@ -240,6 +243,17 @@ func _process(delta: float) -> void:
 		_fullscreen_sync_elapsed = 0.0
 		_sync_gameplay_menu_visibility()
 	if interface_state == InterfaceState.PLAYING:
+		if _application_focused:
+			var joypad_thrust := flight_input.joypad_thrust()
+			if joypad_thrust >= 0.0 and is_instance_valid(speed_slider):
+				var thrust_speed := lerpf(speed_slider.min_value, speed_slider.max_value, joypad_thrust)
+				if not is_equal_approx(speed, thrust_speed):
+					_on_speed_changed(thrust_speed)
+			var joypad_look := flight_input.joypad_look(delta)
+			if joypad_look != Vector2.ZERO:
+				_last_steering_source = "joypad %d" % flight_input.active_joypad_id
+				_record_controller_diagnostic(flight_input.last_joypad_diagnostic)
+				_apply_steering_delta(joypad_look)
 		var keyboard_steering := flight_input.keyboard_delta(delta)
 		if keyboard_steering != Vector2.ZERO:
 			_record_controller_diagnostic("keyboard steering applied")
@@ -316,6 +330,11 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if _is_user_activation_event(event):
 		_start_music()
+	if event is InputEventJoypadButton and event.pressed and interface_state != InterfaceState.PLAYING:
+		if event.button_index == JOY_BUTTON_A:
+			_start_endless()
+			get_viewport().set_input_as_handled()
+			return
 	if event.is_action_pressed("ui_cancel"):
 		_handle_back_command()
 		get_viewport().set_input_as_handled()
@@ -335,12 +354,16 @@ func _input(event: InputEvent) -> void:
 	# a stale drag stream attached to the camera.
 	if interface_state == InterfaceState.PLAYING:
 		if event is InputEventJoypadMotion:
-			var joypad_delta := flight_input.joypad_delta(event, get_process_delta_time())
-			_record_controller_diagnostic(flight_input.last_joypad_diagnostic)
-			if joypad_delta != Vector2.ZERO:
-				_last_steering_source = "joypad %d" % event.device
-				_apply_steering_delta(joypad_delta)
 			return
+		if event is InputEventJoypadButton and event.pressed:
+			if event.button_index == JOY_BUTTON_B:
+				_show_main_menu()
+				get_viewport().set_input_as_handled()
+				return
+			if event.button_index == JOY_BUTTON_Y:
+				_reset_flight()
+				get_viewport().set_input_as_handled()
+				return
 		var steering_delta := flight_input.consume(event, _is_over_hud_control)
 		if steering_delta != Vector2.ZERO:
 			_last_steering_source = "pointer"
@@ -917,7 +940,7 @@ func _update_controller_ui() -> void:
 			var axes: Vector2 = flight_input.joypad_axis_values.get(str(device_id), Vector2.ZERO)
 			device_lines.append("%d %s  X %.3f  Y %.3f" % [device_id, Input.get_joy_name(device_id), axes.x, axes.y])
 		var device_summary := "No controllers connected" if device_lines.is_empty() else "\n".join(device_lines)
-		controller_diagnostics_label.text = "Diagnostics\nActive: %s • Last source: %s\n%s\nLog: %s" % [str(flight_input.active_joypad_id), _last_steering_source, device_summary, CONTROLLER_LOG_PATH]
+		controller_diagnostics_label.text = "Diagnostics\nActive: %s • Last source: %s\nRaw/filtered: %s / %s\nDeadzone: %.2f\n%s\nLog: %s" % [str(flight_input.active_joypad_id), _last_steering_source, str(flight_input.joypad_axis_values.get(str(flight_input.active_joypad_id), Vector2.ZERO)), str(flight_input.last_analog_input), _controller_deadzone_setting, device_summary, CONTROLLER_LOG_PATH]
 
 
 func _record_controller_diagnostic(message: String) -> void:

@@ -8,8 +8,8 @@ const DEFAULT_OUTER_DEADZONE := 0.05
 const DEFAULT_RESPONSE_CURVE := 1.0
 const HYSTERESIS_MARGIN := 0.025
 const JOYPAD_CLAIM_THRESHOLD := 0.45
-const JOY_AXIS_HORIZONTAL := JOY_AXIS_LEFT_X
-const JOY_AXIS_VERTICAL := JOY_AXIS_LEFT_Y
+const JOY_AXIS_HORIZONTAL := JOY_AXIS_RIGHT_X
+const JOY_AXIS_VERTICAL := JOY_AXIS_RIGHT_Y
 var deadzone := DEFAULT_DEADZONE
 var outer_deadzone := DEFAULT_OUTER_DEADZONE
 var response_curve := DEFAULT_RESPONSE_CURVE
@@ -75,6 +75,53 @@ func joypad_delta(event: InputEventJoypadMotion, delta: float) -> Vector2:
 	last_analog_input = filtered
 	last_joypad_diagnostic = "joypad %d axis %d raw %.3f filtered (%.3f, %.3f)" % [event.device, event.axis, event.axis_value, filtered.x, filtered.y]
 	return filtered * 480.0 * delta
+
+
+## Poll the standard right stick once per frame, independent of axis-event cadence.
+func joypad_look(delta: float) -> Vector2:
+	var device_id := active_joypad_id
+	if device_id < 0:
+		for candidate in Input.get_connected_joypads():
+			var candidate_raw := _read_right_stick(candidate)
+			var candidate_filtered := _filter_analog_vector(candidate_raw - calibration_offsets.get(str(candidate), Vector2.ZERO))
+			if candidate_filtered.length() >= JOYPAD_CLAIM_THRESHOLD:
+				device_id = candidate
+				active_joypad_id = candidate
+				last_joypad_diagnostic = "joypad %d claimed steering" % candidate
+				break
+	if device_id < 0:
+		last_analog_input = Vector2.ZERO
+		return Vector2.ZERO
+	var raw := _read_right_stick(device_id)
+	joypad_axis_values[str(device_id)] = raw
+	var offset: Vector2 = calibration_offsets.get(str(device_id), Vector2.ZERO)
+	var filtered := _filter_analog_vector(raw - offset)
+	last_analog_input = filtered
+	last_joypad_diagnostic = "joypad %d frame raw (%.3f, %.3f) filtered (%.3f, %.3f)" % [device_id, raw.x, raw.y, filtered.x, filtered.y]
+	return filtered * 480.0 * delta
+
+
+func _read_right_stick(device_id: int) -> Vector2:
+	return Vector2(Input.get_joy_axis(device_id, JOY_AXIS_RIGHT_X), Input.get_joy_axis(device_id, JOY_AXIS_RIGHT_Y))
+
+
+## Returns left-stick thrust as 0..1. Up is maximum thrust, down is minimum.
+func joypad_thrust() -> float:
+	var device_id := active_joypad_id
+	if device_id < 0:
+		var connected := Input.get_connected_joypads()
+		if connected.is_empty():
+			return -1.0
+		device_id = connected[0]
+	var raw := -Input.get_joy_axis(device_id, JOY_AXIS_LEFT_Y)
+	if not is_finite(raw):
+		return -1.0
+	var magnitude := absf(raw)
+	if magnitude <= deadzone:
+		return -1.0
+	var normalized := clampf((magnitude - deadzone) / maxf(1.0 - deadzone - outer_deadzone, 0.01), 0.0, 1.0)
+	normalized = pow(normalized, maxf(response_curve, 0.1))
+	return clampf((normalized * signf(raw) + 1.0) * 0.5, 0.0, 1.0)
 
 
 func set_calibration(device_id: int, offset: Vector2) -> void:
