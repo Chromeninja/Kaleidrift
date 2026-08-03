@@ -25,6 +25,11 @@ func _run() -> void:
 	assert(main_scene.gameplay_overlay.visible)
 	assert(not main_scene.gameplay_menu_button.visible)
 	assert(main_scene.gameplay_hud_panel.visible)
+	main_scene.performance_diagnostics_toggle.button_pressed = false
+	assert(not main_scene.diagnostics_overlay.visible)
+	main_scene.performance_diagnostics_toggle.button_pressed = true
+	assert(main_scene._performance_diagnostics_setting)
+	assert(main_scene.diagnostics_overlay.visible)
 	assert(not main_scene.menu_panel.visible)
 	assert(main_scene.health_label.text.contains("HEALTH"))
 	assert(main_scene.shield_label.text.contains("SHIELD"))
@@ -90,13 +95,36 @@ func _run() -> void:
 	assert(session.health.invulnerability_remaining >= session.health.invulnerability_seconds)
 	assert(main_scene.health_pips[session.health.current_health].color == Color(0.18, 0.24, 0.30))
 
+	main_scene._show_main_menu()
+	var paused_survival_distance: float = main_scene.survival_session.distance_traveled
+	var paused_survival_position: Vector3 = main_scene.survival_session.position
+	assert(main_scene.survival_session.active)
+	assert(main_scene.survival_button.text.contains("Resume"))
+	for _frame in range(4):
+		await physics_frame
+		await process_frame
+	assert(is_equal_approx(main_scene.survival_session.distance_traveled, paused_survival_distance))
+	assert(main_scene.survival_session.position.is_equal_approx(paused_survival_position))
+	main_scene._show_settings()
+	for _frame in range(4):
+		await physics_frame
+		await process_frame
+	assert(main_scene.survival_session.position.is_equal_approx(paused_survival_position))
+	main_scene._show_main_menu()
+	main_scene._start_survival()
+	assert(main_scene.survival_session.position.is_equal_approx(paused_survival_position))
+
 	main_scene._start_endless()
+	assert(main_scene.diagnostics_overlay.visible)
 	var menu_position: Vector3 = main_scene.camera_position
 	main_scene.gameplay_menu_button.emit_signal("pressed")
-	await process_frame
+	for _frame in range(4):
+		await process_frame
 	assert(main_scene.interface_state == 0)
-	assert(main_scene.camera_position.is_equal_approx(menu_position))
+	assert(main_scene.camera_position.distance_to(menu_position) > 0.01)
+	assert(main_scene.render_viewport.render_target_update_mode == SubViewport.UPDATE_ALWAYS)
 	assert(not main_scene.gameplay_overlay.visible)
+	assert(not main_scene.diagnostics_overlay.visible)
 
 	main_scene.survival_session.health.current_health = 1
 	main_scene.survival_session.health.invulnerability_remaining = 0.0

@@ -307,21 +307,69 @@ vec3 region_color(vec3 point, float travel_distance, vec3 normal) {
 }
 
 vec3 apply_gamut(vec3 color) {
-	float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-	return mix(vec3(luminance), color, gamut_intensity);
+	const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+	color = max(color, vec3(0.0));
+	float luminance = dot(color, LUMA);
+	vec3 saturated = max(mix(vec3(luminance), color, gamut_intensity), vec3(0.0));
+	// Restore the original luminance after clipping an over-saturated negative
+	// channel. This enriches chroma without changing brightness or hue balance.
+	float saturated_luminance = dot(saturated, LUMA);
+	return saturated * (luminance / max(saturated_luminance, 0.00001));
+}
+
+vec3 apply_shadow_toe(vec3 color) {
+	const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+	float luminance = dot(max(color, vec3(0.0)), LUMA);
+	if (luminance <= 0.00001) {
+		return vec3(0.0);
+	}
+	// The toe reaches true black at zero but remains monotonic so dim surface
+	// detail is preserved instead of being crushed into the OLED black floor.
+	float toe_luminance = luminance * luminance / (luminance + 0.012);
+	return color * (toe_luminance / luminance);
+}
+
+float agx_contrast_approx(float value) {
+	float value2 = value * value;
+	float value4 = value2 * value2;
+	return 15.5 * value4 * value2
+		- 40.14 * value4 * value
+		+ 31.96 * value4
+		- 6.868 * value2 * value
+		+ 0.4298 * value2
+		+ 0.1191 * value
+		- 0.00232;
 }
 
 vec3 apply_tone_map(vec3 color) {
+	const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 	float hdr_headroom = max(output_max_linear_value, 1.0);
-	color *= highlight_intensity / max(reference_white, 0.001);
+	color = max(color, vec3(0.0)) * highlight_intensity / max(reference_white, 0.001);
 	if (tone_map_mode == 2) {
 		return min(color, vec3(hdr_headroom));
 	}
-	if (tone_map_mode == 1) {
-		vec3 x = max(color, vec3(0.0));
-		return x / (x + vec3(0.155)) * 1.155;
+	float luminance = dot(color, LUMA);
+	if (luminance <= 0.00001) {
+		return vec3(0.0);
 	}
-	return color / (color + vec3(1.0)) * hdr_headroom;
+	float mapped_luminance;
+	if (tone_map_mode == 1) {
+		// AgX's fitted contrast curve, applied to luminance so saturated highlights
+		// retain their hue instead of rolling off one channel at a time.
+		const float AGX_MIN_EV = -12.47393;
+		const float AGX_MAX_EV = 4.026069;
+		float log_luminance = clamp(log2(max(luminance, 0.000001)), AGX_MIN_EV, AGX_MAX_EV);
+		float normalized = (log_luminance - AGX_MIN_EV) / (AGX_MAX_EV - AGX_MIN_EV);
+		mapped_luminance = clamp(agx_contrast_approx(normalized), 0.0, 1.0) * hdr_headroom;
+	} else {
+		mapped_luminance = luminance / (luminance + 1.0) * hdr_headroom;
+	}
+	vec3 mapped = color * (mapped_luminance / luminance);
+	float peak_channel = max(mapped.r, max(mapped.g, mapped.b));
+	if (peak_channel > hdr_headroom) {
+		mapped *= hdr_headroom / peak_channel;
+	}
+	return max(mapped, vec3(0.0));
 }
 
 void fragment() {
@@ -359,8 +407,8 @@ void fragment() {
 		distance_traveled += max(distance_to_surface * 0.72, 0.008);
 	}
 
-	vec3 background_top = vec3(0.014, 0.008, 0.050);
-	vec3 background_bottom = vec3(0.002, 0.003, 0.012);
+	vec3 background_top = vec3(0.010, 0.004, 0.036);
+	vec3 background_bottom = vec3(0.0);
 	vec3 color = mix(background_bottom, background_top, clamp(UV.y, 0.0, 1.0));
 
 	if (hit) {
@@ -372,6 +420,7 @@ void fragment() {
 
 	color += vec3(0.08, 0.18, 0.36) * min(glow_accumulator, 1.2) * highlight_intensity;
 	color = apply_gamut(color);
+	color = apply_shadow_toe(color);
 	color = apply_tone_map(color);
 	color = max(color, vec3(0.0));
 

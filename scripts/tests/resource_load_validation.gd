@@ -5,6 +5,7 @@ const RESOURCES := [
 	"res://scripts/main.gd",
 	"res://scripts/platform/platform_capabilities.gd",
 	"res://scripts/input/flight_input_adapter.gd",
+	"res://scripts/performance/performance_diagnostics_overlay.gd",
 	"res://shaders/fractal_flight.gdshader",
 ]
 

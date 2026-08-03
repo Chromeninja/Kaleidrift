@@ -39,6 +39,29 @@ static func supports_hdr_output() -> bool:
 	return not is_web() and DisplayServer.get_name() != "headless" and OS.get_name() in ["Windows", "macOS", "iOS", "visionOS"]
 
 
+static func classify_hdr_output(
+	web_output: bool,
+	forced_off: bool,
+	platform_supported: bool,
+	output_requested: bool,
+	internal_hdr: bool,
+	reported_headroom: float
+) -> String:
+	if web_output:
+		return "Web SDR"
+	if forced_off:
+		return "SDR forced"
+	if output_requested and reported_headroom > 1.01:
+		return "HDR output confirmed"
+	if output_requested:
+		return "HDR requested (unconfirmed)"
+	if internal_hdr:
+		return "Internal HDR (SDR output)"
+	if not platform_supported:
+		return "HDR output unsupported"
+	return "SDR output"
+
+
 static func uses_safe_area() -> bool:
 	return OS.has_feature("android") or OS.has_feature("ios") or is_web()
 

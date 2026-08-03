@@ -10,6 +10,16 @@ Use one row per test run. Keep screen brightness consistent and remove the phone
 |  |  |  | Landscape | Medium | Medium |  |  |  |  |  |  |
 |  |  |  | Landscape | High | High |  |  |  |  |  |  |
 
+## HDR and color validation
+
+Record these checks only on displays and operating-system modes that were directly tested. Do not infer display HDR from internal HDR rendering or from an HDR request alone.
+
+| Device / display | OS HDR mode | Renderer | Reported / effective headroom | Game HDR status | SDR/HDR | True black | Near-black detail | Rich color / hue stability | Highlight rolloff | Banding / clipping | Screenshot / notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+|  |  |  |  |  |  |  |  |  |  |  |  |
+
+With Performance diagnostics enabled, verify the overlay remains visible in both gameplay modes, its frame graph advances without sustained allocation growth, portrait layout avoids gameplay controls, and all reported HDR states match the Settings explanation.
+
 ## Web browser test matrix
 
 Use the deployed GitHub Pages URL for final results. A local HTTP server is suitable for development checks but does not replace the deployed-path test.

@@ -34,6 +34,7 @@ Implemented or under active validation:
 - Hideable controls and performance HUD
 - Reduced-motion visual option
 - Live FPS, frame-time, render-resolution, and ray-step information
+- Optional persisted developer diagnostics with a rolling frame-time graph, engine metrics, and honest HDR output state
 - Endless and Survival mode selection
 - Deterministic open-world Survival geometry and spatial-cell obstacles shared by rendering and collision
 - Five-point integer health, temporary hit invulnerability, scoring, game over, and retry
@@ -162,7 +163,9 @@ The Web preset uses Godot's Compatibility renderer and a single-threaded WebAsse
 
 4. Open `http://localhost:8000/`.
 
-The browser build starts at Low quality when there is no saved preference, then retains the normal Automatic, Low, Medium, and High controls. Browser output is SDR because Godot's current WebGL 2 Compatibility renderer does not provide HDR output. A device may support HDR in other browser content; tone mapping and color controls remain available here in SDR, while HDR output controls are disabled. Music begins after the first keyboard, mouse, touch, or controller-button interaction because browsers require user activation for audio. Web uses a browser-native Web Audio fallback because runtime procedural audio streams are not supported reliably by the Godot Web audio path.
+The browser build starts at Low quality when there is no saved preference, then retains the normal Automatic, Low, Medium, and High controls. Browser output is SDR because Godot's current WebGL 2 Compatibility renderer does not provide HDR output. A device may support HDR in other browser content; the richer color grade uses an SDR-safe tone-map here, while HDR output controls are disabled. Music begins after the first keyboard, mouse, touch, or controller-button interaction because browsers require user activation for audio. Web uses a browser-native Web Audio fallback because runtime procedural audio streams are not supported reliably by the Godot Web audio path.
+
+The optional **Performance diagnostics** setting remains visible during Endless and Survival play and reports FPS, a rolling frame-time graph, p90/p95 frame time, quality and render scale, render resolution, ray steps, renderer, HDR state/headroom, draw calls, primitives, memory, nodes, and resources. “HDR output confirmed” requires reported output headroom above SDR; “HDR requested (unconfirmed)” means the request was made but the OS/display result cannot be proven. “Internal HDR” describes the render buffer only and is not a claim that the display is receiving HDR.
 
 Current browser assumptions and limitations:
 

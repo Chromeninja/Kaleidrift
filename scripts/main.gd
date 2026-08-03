@@ -23,6 +23,7 @@ const PlatformCapabilitiesScript := preload("res://scripts/platform/platform_cap
 const FlightInputAdapterScript := preload("res://scripts/input/flight_input_adapter.gd")
 const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
 const AdaptiveQualityControllerScript := preload("res://scripts/performance/adaptive_quality_controller.gd")
+const PerformanceDiagnosticsOverlayScript := preload("res://scripts/performance/performance_diagnostics_overlay.gd")
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
 const QUALITY_PRESETS := [
@@ -56,7 +57,8 @@ var settings_content: VBoxContainer
 var game_over_content: VBoxContainer
 var title_label: Label
 var metrics_label: Label
-var performance_label: Label
+var performance_diagnostics_toggle: CheckButton
+var diagnostics_overlay
 var status_label: Label
 var throttle_label: Label
 var speed_slider: VSlider
@@ -118,14 +120,15 @@ var current_game_mode := GameMode.ENDLESS
 var selected_fractal_level := FractalLevelsScript.Type.FOLD
 var settings_visible := false
 var hdr_mode := HDR_MODE_AUTO
-var tone_map_mode := TONE_MAP_REINHARD
+var tone_map_mode := TONE_MAP_AGX
 var reference_white := 1.0
 var peak_brightness_limit := 4.0
 var highlight_intensity := 1.0
 var gamut_intensity := 1.0
-var hdr_output_active := false
+var hdr_output_requested := false
 var internal_hdr_active := false
 var output_max_linear_value := 1.0
+var _performance_diagnostics_setting := false
 var _reduced_motion_setting := false
 var _music_enabled_setting := true
 var _music_volume_setting := 0.7
@@ -197,6 +200,9 @@ func _ready() -> void:
 		music_volume_slider.value = _music_volume_setting * 100.0
 	if is_instance_valid(controller_deadzone_slider):
 		controller_deadzone_slider.value = _controller_deadzone_setting
+	if is_instance_valid(performance_diagnostics_toggle):
+		performance_diagnostics_toggle.button_pressed = _performance_diagnostics_setting
+	_sync_diagnostics_visibility()
 	_update_controller_ui()
 	if is_instance_valid(fractal_selector):
 		fractal_selector.select(selected_fractal_level)
@@ -248,7 +254,7 @@ func _process(delta: float) -> void:
 	var forward := -basis.z.normalized()
 	var right := basis.x.normalized()
 	var up := basis.y.normalized()
-	if interface_state == InterfaceState.PLAYING and current_game_mode == GameMode.ENDLESS:
+	if current_game_mode == GameMode.ENDLESS and _application_focused:
 		camera_position += forward * speed * delta
 	shader_material.set_shader_parameter("camera_position", camera_position)
 	shader_material.set_shader_parameter("camera_forward", forward)
@@ -292,11 +298,13 @@ func _process(delta: float) -> void:
 	if is_instance_valid(damage_flash):
 		damage_flash.color = Color(1.0, 0.12, 0.18, damage_flash_strength * 0.42)
 	_hdr_update_elapsed += delta
-	if hdr_output_active and _hdr_update_elapsed >= HDR_UPDATE_SECONDS:
+	if hdr_output_requested and _hdr_update_elapsed >= HDR_UPDATE_SECONDS:
 		_hdr_update_elapsed = 0.0
 		_update_output_max_linear_value(get_window().get_output_max_linear_value())
 
 	var frame_ms := delta * 1000.0
+	if is_instance_valid(diagnostics_overlay) and interface_state == InterfaceState.PLAYING:
+		diagnostics_overlay.add_frame_sample(frame_ms)
 	if interface_state == InterfaceState.PLAYING and _application_focused and quality_controller.sample(delta, frame_ms):
 		_apply_resolved_quality()
 	_metrics_elapsed += delta
@@ -581,6 +589,11 @@ func _build_menu_panel(parent: Control) -> void:
 	reduced_motion_toggle.text = "Reduced motion"
 	reduced_motion_toggle.toggled.connect(_on_reduced_motion_toggled)
 	settings_content.add_child(reduced_motion_toggle)
+	performance_diagnostics_toggle = CheckButton.new()
+	performance_diagnostics_toggle.text = "Performance diagnostics"
+	performance_diagnostics_toggle.tooltip_text = "Always show FPS, frame graph, rendering, HDR, and engine metrics during gameplay"
+	performance_diagnostics_toggle.toggled.connect(_on_performance_diagnostics_toggled)
+	settings_content.add_child(performance_diagnostics_toggle)
 	var audio_divider := HSeparator.new()
 	settings_content.add_child(audio_divider)
 	var audio_title := Label.new()
@@ -732,11 +745,10 @@ func _build_gameplay_overlay() -> void:
 	gameplay_menu_button.pressed.connect(_show_main_menu)
 	gameplay_overlay.add_child(gameplay_menu_button)
 	gameplay_menu_button.visible = PlatformCapabilities.should_show_inflight_menu()
-	performance_label = Label.new()
-	performance_label.name = "PerformanceDiagnostics"
-	performance_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	performance_label.add_theme_color_override("font_color", Color(0.72, 0.90, 1.0, 0.82))
-	gameplay_overlay.add_child(performance_label)
+	diagnostics_overlay = PerformanceDiagnosticsOverlayScript.new()
+	diagnostics_overlay.name = "PerformanceDiagnostics"
+	diagnostics_overlay.visible = false
+	gameplay_overlay.add_child(diagnostics_overlay)
 
 	gameplay_hud_panel = PanelContainer.new()
 	gameplay_hud_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -972,6 +984,12 @@ func _on_gamut_changed(value: float) -> void:
 	_save_settings()
 
 
+func _on_performance_diagnostics_toggled(enabled: bool) -> void:
+	_performance_diagnostics_setting = enabled
+	_sync_diagnostics_visibility()
+	_save_settings()
+
+
 func _on_viewport_size_changed() -> void:
 	_resize_render_target()
 	_update_safe_layout()
@@ -1041,12 +1059,16 @@ func _update_safe_layout() -> void:
 	gameplay_menu_button.offset_top = float(safe_rect.position.y + padding)
 	gameplay_menu_button.offset_right = gameplay_menu_button.offset_left + gameplay_menu_button.custom_minimum_size.x
 	gameplay_menu_button.offset_bottom = gameplay_menu_button.offset_top + touch_height
-	performance_label.offset_left = float(safe_rect.position.x + padding)
-	performance_label.offset_top = float(safe_rect.end.y - 46.0 * ui_scale)
-	performance_label.offset_right = performance_label.offset_left + 360.0 * ui_scale
-	performance_label.offset_bottom = float(safe_rect.end.y - padding)
+	var diagnostics_width := minf(float(safe_rect.size.x - padding * 2), (300.0 if portrait else 410.0) * ui_scale)
+	var diagnostics_height := (190.0 if portrait else 170.0) * ui_scale
+	diagnostics_overlay.offset_left = float(safe_rect.position.x + padding)
+	diagnostics_overlay.offset_top = float(safe_rect.end.y - padding) - diagnostics_height
+	diagnostics_overlay.offset_right = diagnostics_overlay.offset_left + diagnostics_width
+	diagnostics_overlay.offset_bottom = float(safe_rect.end.y - padding)
+	diagnostics_overlay.set_ui_scale(ui_scale, portrait)
 	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
 	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
+	performance_diagnostics_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	music_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	music_volume_slider.custom_minimum_size = Vector2(0.0, 32.0 * ui_scale)
 	for control in [hdr_mode_selector, tone_map_selector, hdr_reset_button]:
@@ -1067,7 +1089,6 @@ func _update_safe_layout() -> void:
 	game_over_title.add_theme_font_size_override("font_size", roundi(22.0 * ui_scale))
 	game_over_result.add_theme_font_size_override("font_size", roundi(16.0 * ui_scale))
 	metrics_label.add_theme_font_size_override("font_size", body_font)
-	performance_label.add_theme_font_size_override("font_size", roundi(11.0 * ui_scale))
 	status_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
 	quality_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
 	throttle_label.add_theme_font_size_override("font_size", roundi(12.0 * ui_scale))
@@ -1078,6 +1099,7 @@ func _update_safe_layout() -> void:
 	score_label.add_theme_font_size_override("font_size", body_font)
 	quality_selector.add_theme_font_size_override("font_size", body_font)
 	reduced_motion_toggle.add_theme_font_size_override("font_size", body_font)
+	performance_diagnostics_toggle.add_theme_font_size_override("font_size", body_font)
 	music_toggle.add_theme_font_size_override("font_size", body_font)
 	music_volume_label.add_theme_font_size_override("font_size", body_font)
 	hdr_mode_selector.add_theme_font_size_override("font_size", body_font)
@@ -1157,12 +1179,12 @@ func _apply_hdr_settings() -> void:
 	get_viewport().use_hdr_2d = internal_hdr_active
 	if is_instance_valid(render_viewport):
 		render_viewport.use_hdr_2d = internal_hdr_active
-	hdr_output_active = false
+	hdr_output_requested = false
 	get_window().hdr_output_requested = false
 	if _platform_supports_hdr_output() and hdr_mode != HDR_MODE_OFF:
 		get_window().hdr_output_requested = true
-		hdr_output_active = get_window().hdr_output_requested
-	output_max_linear_value = get_window().get_output_max_linear_value() if hdr_output_active else 1.0
+		hdr_output_requested = get_window().hdr_output_requested
+	output_max_linear_value = get_window().get_output_max_linear_value() if hdr_output_requested else 1.0
 	shader_material.set_shader_parameter("output_max_linear_value", minf(output_max_linear_value, peak_brightness_limit))
 	shader_material.set_shader_parameter("reference_white", reference_white)
 	shader_material.set_shader_parameter("highlight_intensity", highlight_intensity)
@@ -1187,22 +1209,31 @@ func _update_hdr_ui() -> void:
 		return
 	if _is_web_platform():
 		hdr_status_label.text = "Status: SDR output (Godot WebGL 2 renderer)"
-		hdr_values_label.text = "Your display may support HDR, but this web build outputs SDR. Tone mapping remains available."
+		hdr_values_label.text = "WebGL output is SDR even when the display supports HDR. The SDR-safe color grade remains active."
 		return
-	var status := "Unsupported"
-	if hdr_output_active:
-		status = "HDR output active"
-	elif internal_hdr_active:
-		status = "Internal HDR (SDR display output)"
-	elif hdr_mode == HDR_MODE_OFF:
-		status = "SDR forced"
+	var status := _get_hdr_status()
 	hdr_status_label.text = "Status: %s" % status
-	hdr_values_label.text = "Peak %.1fx • White %.2fx • Highlights %.2fx • Gamut %.2fx" % [minf(output_max_linear_value, peak_brightness_limit), reference_white, highlight_intensity, gamut_intensity]
+	hdr_values_label.text = "Reported %.1fx • Effective %.1fx • White %.2fx • Highlights %.2fx • Gamut %.2fx" % [output_max_linear_value, _get_effective_headroom(), reference_white, highlight_intensity, gamut_intensity]
+
+
+func _get_hdr_status() -> String:
+	return PlatformCapabilities.classify_hdr_output(
+		_is_web_platform(),
+		hdr_mode == HDR_MODE_OFF,
+		_platform_supports_hdr_output(),
+		hdr_output_requested,
+		internal_hdr_active,
+		output_max_linear_value
+	)
+
+
+func _get_effective_headroom() -> float:
+	return minf(maxf(output_max_linear_value, 1.0), peak_brightness_limit)
 
 
 func _reset_hdr_settings() -> void:
 	hdr_mode = HDR_MODE_AUTO
-	tone_map_mode = TONE_MAP_REINHARD
+	tone_map_mode = TONE_MAP_AGX
 	reference_white = 1.0
 	peak_brightness_limit = 4.0
 	highlight_intensity = 1.0
@@ -1270,11 +1301,12 @@ func _load_settings() -> void:
 	_reduced_motion_setting = bool(config.get_value(SETTINGS_SECTION, "reduced_motion", false))
 	_music_enabled_setting = bool(config.get_value(SETTINGS_SECTION, "music_enabled", true))
 	_music_volume_setting = clampf(float(config.get_value(SETTINGS_SECTION, "music_volume", 0.7)), 0.0, 1.0)
-	tone_map_mode = clampi(int(config.get_value(SETTINGS_SECTION, "tone_map_mode", TONE_MAP_REINHARD)), TONE_MAP_REINHARD, TONE_MAP_LINEAR)
+	tone_map_mode = clampi(int(config.get_value(SETTINGS_SECTION, "tone_map_mode", TONE_MAP_AGX)), TONE_MAP_REINHARD, TONE_MAP_LINEAR)
 	reference_white = clampf(float(config.get_value(SETTINGS_SECTION, "reference_white", 1.0)), 0.5, 2.0)
 	peak_brightness_limit = clampf(float(config.get_value(SETTINGS_SECTION, "peak_brightness_limit", 4.0)), 1.0, 20.0)
 	highlight_intensity = clampf(float(config.get_value(SETTINGS_SECTION, "highlight_intensity", 1.0)), 0.25, 3.0)
 	gamut_intensity = clampf(float(config.get_value(SETTINGS_SECTION, "gamut_intensity", 1.0)), 0.0, 1.5)
+	_performance_diagnostics_setting = bool(config.get_value(SETTINGS_SECTION, "performance_diagnostics", false))
 	_controller_deadzone_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_deadzone", FlightInputAdapterScript.DEFAULT_DEADZONE)), 0.05, 0.60)
 	_controller_outer_deadzone_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_outer_deadzone", FlightInputAdapterScript.DEFAULT_OUTER_DEADZONE)), 0.0, 0.25)
 	_controller_response_curve_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_response_curve", FlightInputAdapterScript.DEFAULT_RESPONSE_CURVE)), 0.5, 2.0)
@@ -1292,6 +1324,7 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "peak_brightness_limit", peak_brightness_limit)
 	config.set_value(SETTINGS_SECTION, "highlight_intensity", highlight_intensity)
 	config.set_value(SETTINGS_SECTION, "gamut_intensity", gamut_intensity)
+	config.set_value(SETTINGS_SECTION, "performance_diagnostics", _performance_diagnostics_setting)
 	config.set_value(SETTINGS_SECTION, "quality", manual_quality)
 	config.set_value(SETTINGS_SECTION, "fractal_level", selected_fractal_level)
 	config.set_value(SETTINGS_SECTION, "automatic_quality", automatic_quality)
@@ -1316,11 +1349,27 @@ func _update_metrics(latest_frame_ms: float) -> void:
 		int(preset["steps"]), FractalLevelsScript.display_name(_last_shader_fractal_type)
 	]
 	metrics_label.text = metrics_text
-	performance_label.text = "%d FPS • p95 %.1f ms • %s • %.2f×\n%d×%d • %d steps • %s" % [
-		Engine.get_frames_per_second(), quality_controller.get_percentile(0.95), str(preset["name"]),
-		quality_controller.resolved_scale, render_viewport.size.x, render_viewport.size.y,
-		int(preset["steps"]), FractalLevelsScript.display_name(_last_shader_fractal_type)
-	]
+	if is_instance_valid(diagnostics_overlay):
+		var static_memory_mb := Performance.get_monitor(Performance.MEMORY_STATIC) / (1024.0 * 1024.0)
+		diagnostics_overlay.set_details(
+			"%d FPS  %.1f ms  p90 %.1f  p95 %.1f  %s\n%s %s  %.2fx  %dx%d  %d steps  %s\n%s  %.1fx/%.1fx  %s / %s\nDraw %d  primitives %d  memory %.1f MB  nodes %d  resources %d" % [
+				Engine.get_frames_per_second(), latest_frame_ms,
+				quality_controller.get_percentile(0.90), quality_controller.get_percentile(0.95), target_state,
+				str(preset["name"]), "AUTO" if automatic_quality else "MANUAL",
+				quality_controller.resolved_scale, render_viewport.size.x, render_viewport.size.y,
+				int(preset["steps"]), FractalLevelsScript.display_name(_last_shader_fractal_type),
+				_get_hdr_status(), output_max_linear_value, _get_effective_headroom(), OS.get_name(), RenderingServer.get_current_rendering_method(),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)), static_memory_mb,
+				int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+				int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT))
+			]
+		)
+
+
+func _sync_diagnostics_visibility() -> void:
+	if is_instance_valid(diagnostics_overlay):
+		diagnostics_overlay.visible = _performance_diagnostics_setting and interface_state == InterfaceState.PLAYING
 
 
 func get_performance_p90_ms() -> float:
@@ -1346,6 +1395,7 @@ func is_quality_transition_cooling_down() -> bool:
 func _start_endless() -> void:
 	current_game_mode = GameMode.ENDLESS
 	survival_session.stop()
+	survival_button.text = "◇  Start Survival"
 	speed_slider.min_value = 0.25
 	speed = clampf(speed, speed_slider.min_value, speed_slider.max_value)
 	speed_slider.value = speed
@@ -1354,6 +1404,9 @@ func _start_endless() -> void:
 
 
 func _start_survival() -> void:
+	if current_game_mode == GameMode.SURVIVAL and survival_session.active and interface_state == InterfaceState.MENU:
+		_start_playing()
+		return
 	current_game_mode = GameMode.SURVIVAL
 	speed_slider.min_value = 1.5
 	speed = maxf(speed, speed_slider.min_value)
@@ -1374,6 +1427,7 @@ func _start_survival() -> void:
 		spawn_up = Vector3.FORWARD
 	camera_orientation = Basis.looking_at(spawn_forward, spawn_up).get_rotation_quaternion().normalized()
 	camera_position = survival_session.position
+	survival_button.text = "◇  Resume Survival"
 	_start_playing()
 
 
@@ -1394,13 +1448,12 @@ func _start_playing() -> void:
 	menu_panel.visible = false
 	gameplay_overlay.visible = true
 	gameplay_hud_panel.visible = current_game_mode == GameMode.SURVIVAL
+	_sync_diagnostics_visibility()
 	flight_input.reset()
 	_sync_render_activity()
 
 
 func _show_main_menu() -> void:
-	if current_game_mode == GameMode.SURVIVAL:
-		survival_session.stop()
 	interface_state = InterfaceState.MENU
 	settings_visible = false
 	safe_root.visible = true
@@ -1408,9 +1461,11 @@ func _show_main_menu() -> void:
 	menu_panel.visible = true
 	gameplay_overlay.visible = false
 	gameplay_hud_panel.visible = false
+	_sync_diagnostics_visibility()
 	main_menu_content.visible = true
 	settings_scroll.visible = false
 	game_over_content.visible = false
+	survival_button.text = "◇  Resume Survival" if current_game_mode == GameMode.SURVIVAL and survival_session.active else "◇  Start Survival"
 	flight_input.reset()
 	_sync_render_activity()
 
@@ -1503,7 +1558,7 @@ func _sync_render_activity() -> void:
 		return
 	render_viewport.render_target_update_mode = (
 		SubViewport.UPDATE_ALWAYS
-		if interface_state == InterfaceState.PLAYING and _application_focused
+		if _application_focused and (interface_state == InterfaceState.PLAYING or current_game_mode == GameMode.ENDLESS)
 		else SubViewport.UPDATE_ONCE
 	)
 
@@ -1546,4 +1601,5 @@ func _on_survival_game_over(distance: float, final_score: int) -> void:
 	settings_scroll.visible = false
 	game_over_content.visible = true
 	game_over_result.text = "Distance: %d m\nScore: %d" % [floori(distance), final_score]
+	_sync_diagnostics_visibility()
 	_sync_render_activity()
