@@ -36,6 +36,8 @@ Survival exposes only the same bounded sphere-hazard set to rendering and gamepl
 
 `resources/travelers/default_catalog.tres` contains `TravelerDefinition` resources. A definition provides its stable ID, display name, packed scene, visual scale, colors, glow, trail profile, collision radius, camera framing, and optional animation profile.
 
+Saved player characters are separate `CharacterProfile` records in `user://characters.cfg`. A profile selects one catalog definition and supplies its display name, primary/accent colors, glow intensity, and trail style. Profiles never override collision, camera, visual-scene, or other gameplay-owned definition values. Legacy Traveler ID/color keys in `user://settings.cfg` migrate into the initial profile on first load.
+
 The approved collision-radius range is `0.18–0.22`; both built-in placeholders use `0.20`. Adding a Traveler requires a visual scene, definition resource, and catalog entry. It must not require changes to flight, safety, or camera code.
 
 ## Validation boundaries

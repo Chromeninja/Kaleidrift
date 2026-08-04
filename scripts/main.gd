@@ -33,7 +33,10 @@ const CorridorOpeningControllerScript := preload("res://scripts/world/corridor_o
 const ViewModeControllerScript := preload("res://scripts/view/view_mode_controller.gd")
 const SettingsStoreScript := preload("res://scripts/settings/settings_store.gd")
 const FractalRendererScript := preload("res://scripts/rendering/fractal_renderer.gd")
+const CharacterStoreScript := preload("res://scripts/travelers/character_store.gd")
+const CharacterProfileScript := preload("res://scripts/travelers/character_profile.gd")
 const TRAVELER_CATALOG_PATH := "res://resources/travelers/default_catalog.tres"
+const CHARACTERS_PATH := "user://characters.cfg"
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
 const QUALITY_PRESETS := [
@@ -61,6 +64,11 @@ var traveler_output_rect: TextureRect
 var traveler_world_root: Node3D
 var traveler_camera: Camera3D
 var traveler_visual: Node3D
+var character_preview_viewport: SubViewport
+var character_preview_display: TextureRect
+var character_preview_root: Node3D
+var character_preview_camera: Camera3D
+var character_preview_visual: Node3D
 var shader_material: ShaderMaterial
 var hud_layer: CanvasLayer
 var safe_root: MarginContainer
@@ -69,14 +77,30 @@ var menu_panel: PanelContainer
 var main_menu_content: VBoxContainer
 var settings_scroll: ScrollContainer
 var settings_content: VBoxContainer
+var character_scroll: ScrollContainer
+var character_content: VBoxContainer
 var game_over_content: VBoxContainer
 var title_label: Label
 var metrics_label: Label
 var performance_diagnostics_toggle: CheckButton
 var view_mode_selector: OptionButton
-var traveler_selector: OptionButton
-var primary_color_picker: ColorPickerButton
-var accent_color_picker: ColorPickerButton
+var character_profile_list: VBoxContainer
+var character_name_edit: LineEdit
+var character_traveler_selector: OptionButton
+var character_primary_color_picker: ColorPickerButton
+var character_accent_color_picker: ColorPickerButton
+var character_glow_slider: HSlider
+var character_glow_label: Label
+var character_trail_selector: OptionButton
+var character_status_label: Label
+var character_back_button: Button
+var character_create_button: Button
+var character_duplicate_button: Button
+var character_save_button: Button
+var character_use_button: Button
+var character_delete_button: Button
+var character_discard_dialog: ConfirmationDialog
+var character_delete_dialog: ConfirmationDialog
 var diagnostics_overlay
 var status_label: Label
 var throttle_label: Label
@@ -108,6 +132,7 @@ var hdr_reset_button: Button
 var play_button: Button
 var survival_button: Button
 var settings_button: Button
+var character_button: Button
 var exit_button: Button
 var settings_back_button: Button
 var retry_button: Button
@@ -143,12 +168,16 @@ var corridor_controller: CorridorOpeningController
 var view_mode_controller: ViewModeController
 var traveler_catalog: TravelerCatalog
 var traveler_definition: TravelerDefinition
+var character_store
+var active_character_profile
+var editing_character_profile
 var settings_store
 var fractal_renderer
 var interface_state := InterfaceState.MENU
 var current_game_mode := GameMode.ENDLESS
 var selected_fractal_level := FractalLevelsScript.Type.FOLD
 var settings_visible := false
+var character_visible := false
 var hdr_mode := HDR_MODE_AUTO
 var tone_map_mode := TONE_MAP_AGX
 var reference_white := 1.0
@@ -189,6 +218,11 @@ var _selected_view_mode: StringName = &"immersive"
 var _selected_traveler_id: StringName = &"glowing_orb"
 var _traveler_primary_color := Color(0.18, 0.92, 1.0)
 var _traveler_accent_color := Color(1.0, 0.22, 0.82)
+var _traveler_glow_intensity := 2.2
+var _traveler_trail_style: StringName = &"default"
+var _character_dirty := false
+var _character_back_destination := "menu"
+var _character_loading_editor := false
 
 
 func _ready() -> void:
@@ -239,7 +273,9 @@ func _ready() -> void:
 	fractal_renderer = FractalRendererScript.new()
 	fractal_renderer.bind(shader_material)
 	traveler_catalog = load(TRAVELER_CATALOG_PATH) as TravelerCatalog
-	_select_traveler(_selected_traveler_id)
+	character_store = CharacterStoreScript.new(CHARACTERS_PATH)
+	character_store.load_profiles(traveler_catalog, _selected_traveler_id, _traveler_primary_color, _traveler_accent_color)
+	_apply_active_character()
 	view_mode_controller.set_view_mode(_selected_view_mode, flight_rig)
 	_build_hud()
 	if is_instance_valid(quality_selector):
@@ -684,6 +720,10 @@ func _build_menu_panel(parent: Control) -> void:
 	settings_button.text = "Settings"
 	settings_button.pressed.connect(_show_settings)
 	main_menu_content.add_child(settings_button)
+	character_button = Button.new()
+	character_button.text = "Character"
+	character_button.pressed.connect(_show_character_screen)
+	main_menu_content.add_child(character_button)
 	exit_button = Button.new()
 	exit_button.text = "Exit Game"
 	exit_button.pressed.connect(func() -> void: get_tree().quit())
@@ -736,13 +776,13 @@ func _build_menu_panel(parent: Control) -> void:
 	performance_diagnostics_toggle.tooltip_text = "Always show FPS, frame graph, rendering, HDR, and engine metrics during gameplay"
 	performance_diagnostics_toggle.toggled.connect(_on_performance_diagnostics_toggled)
 	settings_content.add_child(performance_diagnostics_toggle)
-	var traveler_divider := HSeparator.new()
-	settings_content.add_child(traveler_divider)
-	var traveler_title := Label.new()
-	traveler_title.text = "VIEW / TRAVELER"
-	traveler_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	traveler_title.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
-	settings_content.add_child(traveler_title)
+	var character_divider := HSeparator.new()
+	settings_content.add_child(character_divider)
+	var character_shortcut := Button.new()
+	character_shortcut.text = "Character"
+	character_shortcut.tooltip_text = "Choose and customize your Traveler character"
+	character_shortcut.pressed.connect(_show_character_from_settings)
+	settings_content.add_child(character_shortcut)
 	view_mode_selector = OptionButton.new()
 	view_mode_selector.add_item("Immersive view")
 	view_mode_selector.set_item_metadata(0, "immersive")
@@ -750,24 +790,6 @@ func _build_menu_panel(parent: Control) -> void:
 	view_mode_selector.set_item_metadata(1, "traveler")
 	view_mode_selector.item_selected.connect(_on_view_mode_selected)
 	settings_content.add_child(view_mode_selector)
-	traveler_selector = OptionButton.new()
-	if traveler_catalog != null:
-		for definition in traveler_catalog.travelers:
-			if definition != null:
-				traveler_selector.add_item(definition.display_name)
-				traveler_selector.set_item_metadata(traveler_selector.item_count - 1, String(definition.identifier))
-	traveler_selector.item_selected.connect(_on_traveler_selected)
-	settings_content.add_child(traveler_selector)
-	primary_color_picker = ColorPickerButton.new()
-	primary_color_picker.text = "Primary color"
-	primary_color_picker.color = _traveler_primary_color
-	primary_color_picker.color_changed.connect(_on_traveler_primary_color_changed)
-	settings_content.add_child(primary_color_picker)
-	accent_color_picker = ColorPickerButton.new()
-	accent_color_picker.text = "Accent color"
-	accent_color_picker.color = _traveler_accent_color
-	accent_color_picker.color_changed.connect(_on_traveler_accent_color_changed)
-	settings_content.add_child(accent_color_picker)
 	var audio_divider := HSeparator.new()
 	settings_content.add_child(audio_divider)
 	var audio_title := Label.new()
@@ -872,6 +894,123 @@ func _build_menu_panel(parent: Control) -> void:
 	settings_back_button.pressed.connect(_show_main_menu)
 	settings_content.add_child(settings_back_button)
 
+	character_scroll = ScrollContainer.new()
+	character_scroll.name = "CharacterScreen"
+	character_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	character_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	character_scroll.visible = false
+	views.add_child(character_scroll)
+	character_content = VBoxContainer.new()
+	character_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	character_content.alignment = BoxContainer.ALIGNMENT_CENTER
+	character_content.add_theme_constant_override("separation", 9)
+	character_scroll.add_child(character_content)
+	var character_title := Label.new()
+	character_title.text = "CHARACTER"
+	character_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	character_title.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0))
+	character_content.add_child(character_title)
+	character_preview_display = TextureRect.new()
+	character_preview_display.custom_minimum_size = Vector2(0.0, 190.0)
+	character_preview_display.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	character_preview_display.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	character_preview_display.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	character_content.add_child(character_preview_display)
+	character_status_label = Label.new()
+	character_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	character_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	character_status_label.add_theme_color_override("font_color", Color(0.67, 0.83, 0.94))
+	character_content.add_child(character_status_label)
+	character_profile_list = VBoxContainer.new()
+	character_profile_list.add_theme_constant_override("separation", 5)
+	character_content.add_child(character_profile_list)
+	var profile_actions := HBoxContainer.new()
+	profile_actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	character_content.add_child(profile_actions)
+	character_create_button = Button.new()
+	character_create_button.text = "Create New"
+	character_create_button.pressed.connect(_create_character_profile)
+	profile_actions.add_child(character_create_button)
+	character_duplicate_button = Button.new()
+	character_duplicate_button.text = "Duplicate"
+	character_duplicate_button.pressed.connect(_duplicate_character_profile)
+	profile_actions.add_child(character_duplicate_button)
+	character_delete_button = Button.new()
+	character_delete_button.text = "Delete"
+	character_delete_button.pressed.connect(_request_delete_character_profile)
+	profile_actions.add_child(character_delete_button)
+	var editor_divider := HSeparator.new()
+	character_content.add_child(editor_divider)
+	character_name_edit = LineEdit.new()
+	character_name_edit.placeholder_text = "Character name"
+	character_name_edit.max_length = 24
+	character_name_edit.text_changed.connect(_on_character_editor_changed)
+	character_content.add_child(character_name_edit)
+	character_traveler_selector = OptionButton.new()
+	if traveler_catalog != null:
+		for definition in traveler_catalog.travelers:
+			if definition != null and definition.is_valid_definition():
+				character_traveler_selector.add_item(definition.display_name)
+				character_traveler_selector.set_item_metadata(character_traveler_selector.item_count - 1, String(definition.identifier))
+	character_traveler_selector.item_selected.connect(_on_character_traveler_selected)
+	character_content.add_child(character_traveler_selector)
+	character_primary_color_picker = ColorPickerButton.new()
+	character_primary_color_picker.text = "Primary color"
+	character_primary_color_picker.color_changed.connect(_on_character_primary_color_changed)
+	character_content.add_child(character_primary_color_picker)
+	character_accent_color_picker = ColorPickerButton.new()
+	character_accent_color_picker.text = "Accent color"
+	character_accent_color_picker.color_changed.connect(_on_character_accent_color_changed)
+	character_content.add_child(character_accent_color_picker)
+	character_glow_label = Label.new()
+	character_glow_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	character_content.add_child(character_glow_label)
+	character_glow_slider = HSlider.new()
+	character_glow_slider.min_value = 0.0
+	character_glow_slider.max_value = 8.0
+	character_glow_slider.step = 0.05
+	character_glow_slider.value_changed.connect(_on_character_glow_changed)
+	character_content.add_child(character_glow_slider)
+	character_trail_selector = OptionButton.new()
+	character_trail_selector.add_item("Trail: Default")
+	character_trail_selector.set_item_metadata(0, "default")
+	character_trail_selector.add_item("Trail: Short")
+	character_trail_selector.set_item_metadata(1, "short")
+	character_trail_selector.add_item("Trail: Long")
+	character_trail_selector.set_item_metadata(2, "long")
+	character_trail_selector.item_selected.connect(_on_character_trail_selected)
+	character_content.add_child(character_trail_selector)
+	var save_actions := HBoxContainer.new()
+	save_actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	character_content.add_child(save_actions)
+	character_save_button = Button.new()
+	character_save_button.text = "Save"
+	character_save_button.pressed.connect(_save_character_profile)
+	save_actions.add_child(character_save_button)
+	character_use_button = Button.new()
+	character_use_button.text = "Use This Character"
+	character_use_button.pressed.connect(_use_character_profile)
+	save_actions.add_child(character_use_button)
+	character_back_button = Button.new()
+	character_back_button.text = "Back"
+	character_back_button.pressed.connect(_request_character_back)
+	character_content.add_child(character_back_button)
+	_build_character_preview_pipeline()
+	character_discard_dialog = ConfirmationDialog.new()
+	character_discard_dialog.title = "Unsaved character changes"
+	character_discard_dialog.dialog_text = "Save your changes before leaving this character screen?"
+	character_discard_dialog.get_ok_button().text = "Save and leave"
+	character_discard_dialog.add_button("Discard", true, "discard")
+	character_discard_dialog.confirmed.connect(_save_and_leave_character_screen)
+	character_discard_dialog.custom_action.connect(_on_character_discard_action)
+	add_child(character_discard_dialog)
+	character_delete_dialog = ConfirmationDialog.new()
+	character_delete_dialog.title = "Delete character"
+	character_delete_dialog.dialog_text = "Delete this character profile? This cannot be undone."
+	character_delete_dialog.get_ok_button().text = "Delete"
+	character_delete_dialog.confirmed.connect(_delete_character_profile)
+	add_child(character_delete_dialog)
+
 	game_over_content = VBoxContainer.new()
 	game_over_content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	game_over_content.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -974,6 +1113,275 @@ func _build_gameplay_overlay() -> void:
 func _apply_steering_delta(delta_pixels: Vector2) -> void:
 	flight_controller.apply_steering_delta(flight_rig, delta_pixels)
 	camera_orientation = flight_rig.orientation
+
+
+func _build_character_preview_pipeline() -> void:
+	character_preview_viewport = SubViewport.new()
+	character_preview_viewport.name = "CharacterPreviewViewport"
+	character_preview_viewport.size = Vector2i(480, 280)
+	character_preview_viewport.transparent_bg = true
+	character_preview_viewport.own_world_3d = true
+	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(character_preview_viewport)
+	character_preview_root = Node3D.new()
+	character_preview_viewport.add_child(character_preview_root)
+	character_preview_camera = Camera3D.new()
+	character_preview_camera.fov = 48.0
+	character_preview_camera.position = Vector3(0.0, 0.0, 2.5)
+	character_preview_camera.current = true
+	character_preview_root.add_child(character_preview_camera)
+	character_preview_display.texture = character_preview_viewport.get_texture()
+
+
+func _show_character_screen() -> void:
+	_show_character_screen_from("menu")
+
+
+func _show_character_from_settings() -> void:
+	_show_character_screen_from("settings")
+
+
+func _show_character_screen_from(destination: String) -> void:
+	if character_store == null:
+		return
+	_character_back_destination = destination
+	settings_visible = false
+	character_visible = true
+	main_menu_content.visible = false
+	settings_scroll.visible = false
+	character_scroll.visible = true
+	game_over_content.visible = false
+	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_load_character_editor(character_store.get_active_profile(traveler_catalog))
+	_refresh_character_list()
+	flight_input.reset()
+
+
+func _load_character_editor(profile) -> void:
+	if profile == null:
+		return
+	_character_loading_editor = true
+	editing_character_profile = profile.duplicate_profile()
+	character_name_edit.text = editing_character_profile.display_name
+	for index in range(character_traveler_selector.item_count):
+		if StringName(str(character_traveler_selector.get_item_metadata(index))) == editing_character_profile.traveler_id:
+			character_traveler_selector.select(index)
+			break
+	character_primary_color_picker.color = editing_character_profile.primary_color
+	character_accent_color_picker.color = editing_character_profile.accent_color
+	character_glow_slider.value = editing_character_profile.glow_intensity
+	for index in range(character_trail_selector.item_count):
+		if StringName(str(character_trail_selector.get_item_metadata(index))) == editing_character_profile.trail_style:
+			character_trail_selector.select(index)
+			break
+	_character_loading_editor = false
+	_character_dirty = false
+	_update_character_editor_status()
+	_refresh_character_preview(true)
+
+
+func _refresh_character_list() -> void:
+	if character_profile_list == null or character_store == null:
+		return
+	for child in character_profile_list.get_children():
+		child.queue_free()
+	for profile in character_store.profiles:
+		var card := Button.new()
+		card.text = "%s%s" % ["✓ " if profile.profile_id == character_store.active_profile_id else "", profile.display_name]
+		card.tooltip_text = "%s • %s" % [profile.display_name, profile.traveler_id]
+		card.pressed.connect(_on_character_card_selected.bind(profile.profile_id))
+		character_profile_list.add_child(card)
+	character_delete_button.disabled = character_store.profiles.size() <= 1
+
+
+func _on_character_card_selected(profile_id: StringName) -> void:
+	var profile = character_store.find_profile(profile_id)
+	if profile != null:
+		_load_character_editor(profile)
+
+
+func _create_character_profile() -> void:
+	if character_store.profiles.size() >= CharacterStoreScript.MAX_PROFILES:
+		character_status_label.text = "Character limit reached. Delete a profile to create another."
+		return
+	var profile = character_store.create_profile(traveler_catalog, &"glowing_orb", CharacterProfileScript.DEFAULT_PRIMARY, CharacterProfileScript.DEFAULT_ACCENT, "New Traveler")
+	editing_character_profile = profile
+	_load_character_editor(profile)
+	_character_dirty = true
+	_update_character_editor_status()
+
+
+func _duplicate_character_profile() -> void:
+	if editing_character_profile == null:
+		return
+	if character_store.profiles.size() >= CharacterStoreScript.MAX_PROFILES:
+		character_status_label.text = "Character limit reached. Delete a profile to duplicate another."
+		return
+	var duplicate = editing_character_profile.duplicate_profile()
+	duplicate.profile_id = &""
+	duplicate.display_name = "%s Copy" % editing_character_profile.display_name
+	if not character_store.add_profile(duplicate, traveler_catalog):
+		return
+	var newest = character_store.profiles.back()
+	_load_character_editor(newest)
+	_refresh_character_list()
+	character_status_label.text = "Duplicate created. Save changes when ready."
+
+
+func _request_delete_character_profile() -> void:
+	if character_store == null or character_store.profiles.size() <= 1 or editing_character_profile == null:
+		return
+	character_delete_dialog.popup_centered()
+
+
+func _delete_character_profile() -> void:
+	if editing_character_profile == null:
+		return
+	var active = character_store.delete_profile(editing_character_profile.profile_id, traveler_catalog)
+	_apply_active_character()
+	_load_character_editor(active)
+	_refresh_character_list()
+	character_status_label.text = "Character deleted."
+
+
+func _save_character_profile() -> bool:
+	if editing_character_profile == null:
+		return false
+	var existing = character_store.find_profile(editing_character_profile.profile_id)
+	var saved = character_store.update_profile(editing_character_profile, traveler_catalog) if existing != null else character_store.add_profile(editing_character_profile, traveler_catalog)
+	if not saved:
+		character_status_label.text = "Unable to save character profile."
+		return false
+	editing_character_profile = character_store.find_profile(editing_character_profile.profile_id) if existing != null else character_store.profiles.back()
+	_character_dirty = false
+	_refresh_character_list()
+	_update_character_editor_status()
+	return true
+
+
+func _use_character_profile() -> void:
+	if not _save_character_profile() or editing_character_profile == null:
+		return
+	active_character_profile = character_store.select_profile(editing_character_profile.profile_id, traveler_catalog)
+	_apply_active_character()
+	_refresh_character_list()
+	character_status_label.text = "%s is now active." % active_character_profile.display_name
+
+
+func _request_character_back() -> void:
+	if _character_dirty:
+		character_discard_dialog.popup_centered()
+		return
+	_leave_character_screen()
+
+
+func _save_and_leave_character_screen() -> void:
+	if _save_character_profile():
+		_leave_character_screen()
+
+
+func _on_character_discard_action(action: StringName) -> void:
+	if action == &"discard":
+		_leave_character_screen()
+
+
+func _leave_character_screen() -> void:
+	character_visible = false
+	character_scroll.visible = false
+	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	if _character_back_destination == "settings":
+		_show_settings()
+	else:
+		_show_main_menu()
+
+
+func _on_character_editor_changed(_value: String) -> void:
+	if _character_loading_editor or editing_character_profile == null:
+		return
+	editing_character_profile.display_name = character_name_edit.text
+	_character_editor_did_change()
+
+
+func _on_character_traveler_selected(index: int) -> void:
+	if _character_loading_editor or editing_character_profile == null:
+		return
+	editing_character_profile.traveler_id = StringName(str(character_traveler_selector.get_item_metadata(index)))
+	_character_editor_did_change(true)
+
+
+func _on_character_primary_color_changed(value: Color) -> void:
+	if _character_loading_editor or editing_character_profile == null:
+		return
+	editing_character_profile.primary_color = value
+	_character_editor_did_change()
+
+
+func _on_character_accent_color_changed(value: Color) -> void:
+	if _character_loading_editor or editing_character_profile == null:
+		return
+	editing_character_profile.accent_color = value
+	_character_editor_did_change()
+
+
+func _on_character_glow_changed(value: float) -> void:
+	if _character_loading_editor or editing_character_profile == null:
+		return
+	editing_character_profile.glow_intensity = value
+	_character_editor_did_change()
+
+
+func _on_character_trail_selected(index: int) -> void:
+	if _character_loading_editor or editing_character_profile == null:
+		return
+	editing_character_profile.trail_style = StringName(str(character_trail_selector.get_item_metadata(index)))
+	_character_editor_did_change()
+
+
+func _character_editor_did_change(rebuild_preview := false) -> void:
+	_character_dirty = true
+	_update_character_editor_status()
+	_refresh_character_preview(rebuild_preview)
+
+
+func _update_character_editor_status() -> void:
+	if character_status_label == null or editing_character_profile == null:
+		return
+	character_glow_label.text = "Glow intensity  %.2f" % editing_character_profile.glow_intensity
+	character_status_label.text = "%s%s" % [editing_character_profile.display_name, " • Unsaved changes" if _character_dirty else ""]
+
+
+func _refresh_character_preview(rebuild := false) -> void:
+	if editing_character_profile == null or character_preview_root == null:
+		return
+	var definition := traveler_catalog.find_definition(editing_character_profile.traveler_id)
+	if definition == null:
+		return
+	if rebuild or not is_instance_valid(character_preview_visual) or character_preview_visual.get_meta("traveler_id", &"") != definition.identifier:
+		if is_instance_valid(character_preview_visual):
+			character_preview_visual.queue_free()
+		character_preview_visual = definition.visual_scene.instantiate() as Node3D
+		if character_preview_visual == null:
+			return
+		character_preview_visual.set_meta("traveler_id", definition.identifier)
+		character_preview_root.add_child(character_preview_visual)
+	if character_preview_visual.has_method("set_visual_scale"):
+		character_preview_visual.set_visual_scale(definition.visual_scale * 1.55)
+	if character_preview_visual.has_method("configure"):
+		character_preview_visual.configure(editing_character_profile.primary_color, editing_character_profile.accent_color, editing_character_profile.glow_intensity, editing_character_profile.trail_style)
+
+
+func _apply_active_character() -> void:
+	if character_store == null:
+		return
+	active_character_profile = character_store.get_active_profile(traveler_catalog)
+	if active_character_profile == null:
+		return
+	_selected_traveler_id = active_character_profile.traveler_id
+	_traveler_primary_color = active_character_profile.primary_color
+	_traveler_accent_color = active_character_profile.accent_color
+	_traveler_glow_intensity = active_character_profile.glow_intensity
+	_traveler_trail_style = active_character_profile.trail_style
+	_select_traveler(_selected_traveler_id)
 
 
 func _is_over_hud_control(position: Vector2) -> bool:
@@ -1167,23 +1575,6 @@ func _on_view_mode_selected(index: int) -> void:
 	_save_settings()
 
 
-func _on_traveler_selected(index: int) -> void:
-	_select_traveler(StringName(str(traveler_selector.get_item_metadata(index))))
-	_save_settings()
-
-
-func _on_traveler_primary_color_changed(value: Color) -> void:
-	_traveler_primary_color = value
-	_configure_traveler_visual()
-	_save_settings()
-
-
-func _on_traveler_accent_color_changed(value: Color) -> void:
-	_traveler_accent_color = value
-	_configure_traveler_visual()
-	_save_settings()
-
-
 func _on_viewport_size_changed() -> void:
 	_resize_render_target()
 	_update_safe_layout()
@@ -1263,8 +1654,11 @@ func _update_safe_layout() -> void:
 	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
 	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	performance_diagnostics_toggle.custom_minimum_size = Vector2(0.0, touch_height)
-	for traveler_control in [view_mode_selector, traveler_selector, primary_color_picker, accent_color_picker]:
-		traveler_control.custom_minimum_size = Vector2(0.0, touch_height)
+	view_mode_selector.custom_minimum_size = Vector2(0.0, touch_height)
+	for character_control in [character_name_edit, character_traveler_selector, character_primary_color_picker, character_accent_color_picker, character_trail_selector, character_back_button]:
+		character_control.custom_minimum_size = Vector2(0.0, touch_height)
+	character_preview_display.custom_minimum_size = Vector2(0.0, 150.0 * ui_scale)
+	character_glow_slider.custom_minimum_size = Vector2(0.0, 28.0 * ui_scale)
 	music_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	music_volume_slider.custom_minimum_size = Vector2(0.0, 32.0 * ui_scale)
 	for control in [hdr_mode_selector, tone_map_selector, hdr_reset_button]:
@@ -1273,6 +1667,7 @@ func _update_safe_layout() -> void:
 		play_button,
 		survival_button,
 		settings_button,
+		character_button,
 		exit_button,
 		settings_back_button,
 		retry_button,
@@ -1296,8 +1691,9 @@ func _update_safe_layout() -> void:
 	quality_selector.add_theme_font_size_override("font_size", body_font)
 	reduced_motion_toggle.add_theme_font_size_override("font_size", body_font)
 	performance_diagnostics_toggle.add_theme_font_size_override("font_size", body_font)
-	for traveler_control in [view_mode_selector, traveler_selector, primary_color_picker, accent_color_picker]:
-		traveler_control.add_theme_font_size_override("font_size", body_font)
+	view_mode_selector.add_theme_font_size_override("font_size", body_font)
+	for character_control in [character_name_edit, character_traveler_selector, character_primary_color_picker, character_accent_color_picker, character_trail_selector, character_back_button, character_create_button, character_duplicate_button, character_save_button, character_use_button, character_delete_button]:
+		character_control.add_theme_font_size_override("font_size", body_font)
 	music_toggle.add_theme_font_size_override("font_size", body_font)
 	music_volume_label.add_theme_font_size_override("font_size", body_font)
 	hdr_mode_selector.add_theme_font_size_override("font_size", body_font)
@@ -1311,6 +1707,7 @@ func _update_safe_layout() -> void:
 		play_button,
 		survival_button,
 		settings_button,
+		character_button,
 		exit_button,
 		settings_back_button,
 		retry_button,
@@ -1545,11 +1942,8 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "controller_outer_deadzone", _controller_outer_deadzone_setting)
 	config.set_value(SETTINGS_SECTION, "controller_response_curve", _controller_response_curve_setting)
 	config.set_value(SETTINGS_SECTION, "controller_calibration", flight_input.calibration_offsets if is_instance_valid(flight_input) else {})
-	config.set_value(SETTINGS_SECTION, "settings_schema_version", 2)
+	config.set_value(SETTINGS_SECTION, "settings_schema_version", 3)
 	config.set_value(SETTINGS_SECTION, "view_mode", String(_selected_view_mode))
-	config.set_value(SETTINGS_SECTION, "traveler_id", String(_selected_traveler_id))
-	config.set_value(SETTINGS_SECTION, "traveler_primary_color", _traveler_primary_color)
-	config.set_value(SETTINGS_SECTION, "traveler_accent_color", _traveler_accent_color)
 	settings_store.save_config(config)
 
 
@@ -1685,6 +2079,7 @@ func _start_playing() -> void:
 func _show_main_menu() -> void:
 	interface_state = InterfaceState.MENU
 	settings_visible = false
+	character_visible = false
 	safe_root.visible = true
 	throttle_panel.visible = true
 	menu_panel.visible = true
@@ -1693,6 +2088,8 @@ func _show_main_menu() -> void:
 	_sync_diagnostics_visibility()
 	main_menu_content.visible = true
 	settings_scroll.visible = false
+	character_scroll.visible = false
+	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	game_over_content.visible = false
 	survival_button.text = "◇  Resume Survival" if current_game_mode == GameMode.SURVIVAL and survival_session.active else "◇  Start Survival"
 	flight_input.reset()
@@ -1701,8 +2098,11 @@ func _show_main_menu() -> void:
 
 func _show_settings() -> void:
 	settings_visible = true
+	character_visible = false
 	main_menu_content.visible = false
 	settings_scroll.visible = true
+	character_scroll.visible = false
+	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	game_over_content.visible = false
 	flight_input.reset()
 
@@ -1710,6 +2110,8 @@ func _show_settings() -> void:
 func _handle_back_command() -> void:
 	if interface_state == InterfaceState.PLAYING:
 		_show_main_menu()
+	elif character_visible:
+		_request_character_back()
 	elif settings_visible or interface_state == InterfaceState.GAME_OVER:
 		_show_main_menu()
 
@@ -1831,7 +2233,7 @@ func _select_traveler(identifier: StringName) -> void:
 
 func _configure_traveler_visual() -> void:
 	if is_instance_valid(traveler_visual) and traveler_visual.has_method("configure"):
-		traveler_visual.configure(_traveler_primary_color, _traveler_accent_color, traveler_definition.glow_intensity)
+		traveler_visual.configure(_traveler_primary_color, _traveler_accent_color, _traveler_glow_intensity, _traveler_trail_style)
 
 
 func _sync_traveler_presentation(presentation: Transform3D) -> void:
@@ -1853,15 +2255,6 @@ func _sync_traveler_presentation(presentation: Transform3D) -> void:
 func _sync_view_controls() -> void:
 	if is_instance_valid(view_mode_selector):
 		view_mode_selector.select(1 if _selected_view_mode == &"traveler" else 0)
-	if is_instance_valid(traveler_selector):
-		for index in range(traveler_selector.item_count):
-			if StringName(str(traveler_selector.get_item_metadata(index))) == _selected_traveler_id:
-				traveler_selector.select(index)
-				break
-	if is_instance_valid(primary_color_picker):
-		primary_color_picker.color = _traveler_primary_color
-	if is_instance_valid(accent_color_picker):
-		accent_color_picker.color = _traveler_accent_color
 
 
 func _sync_render_activity() -> void:

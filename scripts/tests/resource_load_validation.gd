@@ -16,6 +16,8 @@ const RESOURCES := [
 	"res://scripts/view/third_person_camera_controller.gd",
 	"res://scripts/rendering/fractal_renderer.gd",
 	"res://scripts/settings/settings_store.gd",
+	"res://scripts/travelers/character_profile.gd",
+	"res://scripts/travelers/character_store.gd",
 	"res://resources/travelers/default_catalog.tres",
 	"res://shaders/fractal_flight.gdshader",
 ]

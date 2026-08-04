@@ -38,7 +38,7 @@ Implemented or under active validation:
 - Live FPS, frame-time, render-resolution, and ray-step information
 - Optional persisted developer diagnostics with a rolling frame-time graph, engine metrics, and honest HDR output state
 - Immersive and third-person Traveler views over one authoritative flight rig
-- Resource-driven glowing-orb and geometric-bird placeholder Travelers with persisted colors
+- A dedicated Character screen for saved Traveler profiles, previewing, creation, selection, colors, glow, and trail style
 - Predictive swept-sphere safety, risk-based localized opening, tangent sliding, and last-safe recovery
 - SDF-based third-person camera retraction without camera-driven corridor enlargement
 - Endless and Survival mode selection
@@ -322,6 +322,8 @@ godot --headless --path . --script res://scripts/tests/survival_integration_test
 godot --headless --path . --script res://scripts/tests/traveler_architecture_test.gd
 godot --headless --path . --script res://scripts/tests/world_query_test.gd
 godot --headless --path . --script res://scripts/tests/traveler_integration_test.gd
+godot --headless --path . --script res://scripts/tests/character_store_test.gd
+godot --headless --path . --script res://scripts/tests/character_screen_integration_test.gd
 godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
 godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
 godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html

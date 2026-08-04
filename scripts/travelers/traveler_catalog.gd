@@ -14,3 +14,11 @@ func find_definition(identifier: StringName) -> TravelerDefinition:
 		if typed_definition != null and typed_definition.is_valid_definition():
 			return typed_definition
 	return null
+
+
+func has_definition(identifier: StringName) -> bool:
+	for definition in travelers:
+		var typed_definition := definition as TravelerDefinition
+		if typed_definition != null and typed_definition.identifier == identifier and typed_definition.is_valid_definition():
+			return true
+	return false

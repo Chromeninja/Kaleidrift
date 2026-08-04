@@ -1,11 +1,14 @@
 class_name TravelerVisual
 extends Node3D
 
+const TRAIL_STYLES := [&"default", &"short", &"long"]
+
 @export_enum("orb", "geometric_bird") var visual_kind := "orb"
 
 var primary_color := Color(0.18, 0.92, 1.0)
 var accent_color := Color(1.0, 0.22, 0.82)
 var glow_intensity := 2.2
+var trail_style: StringName = &"default"
 var steering := Vector2.ZERO
 var _fragments: Array[Node3D] = []
 var _primary_material: StandardMaterial3D
@@ -23,14 +26,16 @@ func _ready() -> void:
 		_build_orb()
 
 
-func configure(primary: Color, accent: Color, glow: float) -> void:
+func configure(primary: Color, accent: Color, glow: float, new_trail_style: StringName = &"default") -> void:
 	primary_color = primary
 	accent_color = accent
 	glow_intensity = glow
+	trail_style = new_trail_style if new_trail_style in TRAIL_STYLES else &"default"
 	if is_instance_valid(_primary_material):
 		_configure_material(_primary_material, primary_color)
 	if is_instance_valid(_accent_material):
 		_configure_material(_accent_material, accent_color)
+	_apply_trail_style()
 
 
 func set_visual_scale(value: float) -> void:
@@ -67,6 +72,7 @@ func _build_orb() -> void:
 		instance.material_override = _accent_material if index % 2 == 0 else _primary_material
 		fragment.add_child(instance)
 		_fragments.append(fragment)
+	_apply_trail_style()
 
 
 func _build_geometric_bird() -> void:
@@ -88,6 +94,17 @@ func _build_geometric_bird() -> void:
 	var tail := BoxMesh.new()
 	tail.size = Vector3(0.10, 0.12, 0.36)
 	_add_mesh(tail, Vector3.ONE, Vector3(0.0, 0.0, 0.48), _primary_material)
+	_apply_trail_style()
+
+
+func _apply_trail_style() -> void:
+	var multiplier := 1.0
+	if trail_style == &"short":
+		multiplier = 0.72
+	elif trail_style == &"long":
+		multiplier = 1.35
+	for fragment in _fragments:
+		fragment.scale = Vector3.ONE * multiplier
 
 
 func _add_mesh(mesh: PrimitiveMesh, mesh_scale: Vector3, offset: Vector3, material: Material) -> MeshInstance3D:

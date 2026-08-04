@@ -78,3 +78,11 @@ Record Endless and Survival as separate rows for every device. For Survival, als
 - Returning to a previously visited 3D cell regenerates the same obstacle layout.
 - Damage flash and vibration remain comfortable with reduced motion enabled.
 - Health pips, health text, shield countdown, distance, score, throttle, platform-appropriate navigation, and game-over actions remain readable in portrait and landscape.
+## Character profile validation
+
+| Platform/device | Portrait profile creation/editing | Landscape profile creation/editing | Preview / color / glow / trail | Controller focus/navigation | Persistence after restart | Evidence / notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| Android (unperformed) |  |  |  |  |  |  |
+| Web Chromium (unperformed) |  |  |  |  |  |  |
+| Web Firefox (unperformed) |  |  |  |  |  |  |
+| Web Safari (unperformed) |  |  |  |  |  |  |

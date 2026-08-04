@@ -35,6 +35,6 @@ The fractal shader renders into a scaled 2D `SubViewport`. Traveler view adds a 
 
 ## Quality and settings
 
-Adaptive quality changes internal render scale, ray steps, view distance, and visual detail. It never changes gameplay SDF accuracy. Settings in `user://settings.cfg` include quality, fractal, comfort/audio/HDR/controller options, view mode, Traveler ID, and primary/accent colors.
+Adaptive quality changes internal render scale, ray steps, view distance, and visual detail. It never changes gameplay SDF accuracy. General settings in `user://settings.cfg` include quality, fractal, comfort/audio/HDR/controller options, and view mode. Saved Traveler character profiles live independently in `user://characters.cfg`.
 
 Use `doc/TRAVELER_ARCHITECTURE.md` for the engineering contract and `DEVICE_TEST_MATRIX.md` for honest physical-device/browser evidence.

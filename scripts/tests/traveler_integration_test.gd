@@ -9,6 +9,8 @@ func _run() -> void:
 	var main_scene = load("res://main.tscn").instantiate()
 	root.add_child(main_scene)
 	await process_frame
+	main_scene.view_mode_controller.set_view_mode(ViewModeController.IMMERSIVE, main_scene.flight_rig)
+	main_scene._selected_view_mode = ViewModeController.IMMERSIVE
 	main_scene._start_endless()
 	await physics_frame
 	await process_frame
