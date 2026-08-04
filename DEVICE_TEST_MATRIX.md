@@ -20,6 +20,17 @@ Record these checks only on displays and operating-system modes that were direct
 
 With Performance diagnostics enabled, verify the overlay remains visible in both gameplay modes, its frame graph advances without sustained allocation growth, portrait layout avoids gameplay controls, and all reported HDR states match the Settings explanation.
 
+## Traveler view validation
+
+Record Immersive and Traveler at the same fixed quality. Do not fill performance or physical-device claims without direct measurement.
+
+| Device / browser | Orientation | Mode | Traveler | Quality | Immersive p95 | Traveler p95 | Delta | Camera obstruction failures | Corridor/recovery failures | Heat/artifacts/notes |
+|---|---|---|---|---|---:|---:|---:|---:|---:|---|
+|  | Landscape | Endless | Glowing Orb | Low |  |  |  |  |  |  |
+|  | Portrait | Survival | Geometric Bird | Low |  |  |  |  |  |  |
+
+Verify view switching preserves position, speed, steering, and Survival state; Immersive shows no Traveler layer; colors persist; decorative fragments never change clearance; the camera retracts rather than moving the rig; and camera protection does not enlarge the gameplay corridor.
+
 ## Web browser test matrix
 
 Use the deployed GitHub Pages URL for final results. A local HTTP server is suitable for development checks but does not replace the deployed-path test.

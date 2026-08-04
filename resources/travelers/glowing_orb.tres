@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="TravelerDefinition" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/travelers/traveler_definition.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/travelers/glowing_orb.tscn" id="2"]
+[ext_resource type="Script" path="res://scripts/travelers/traveler_trail_profile.gd" id="3"]
+
+[sub_resource type="Resource" id="Trail"]
+script = ExtResource("3")
+length = 1.4
+width = 0.06
+opacity = 0.55
+particle_count = 12
+
+[resource]
+script = ExtResource("1")
+identifier = &"glowing_orb"
+display_name = "Glowing Orb"
+visual_scene = ExtResource("2")
+visual_scale = 1.0
+default_primary_color = Color(0.18, 0.92, 1, 1)
+default_accent_color = Color(1, 0.22, 0.82, 1)
+glow_intensity = 2.2
+trail_profile = SubResource("Trail")
+gameplay_collision_radius = 0.2
+camera_distance = 2.8
+camera_height = 0.72
+camera_look_ahead = 1.0

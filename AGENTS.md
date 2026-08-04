@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-KaleiDrift is a Godot 4.7.1 fractal-flight prototype targeting Android, Windows, and Web. `main.tscn` starts `scripts/main.gd`; Survival logic lives in `scripts/gameplay/`, audio in `scripts/audio/`, platform decisions in `scripts/platform/`, normalized input in `scripts/input/`, and GPU ray marching in `shaders/fractal_flight.gdshader`. Preserve Endless and Survival behavior, deterministic Survival calculations, adaptive quality, browser audio activation, and corridor-opening behavior.
+KaleiDrift is a Godot 4.7.1 fractal-flight prototype targeting Android, Windows, and Web. `main.tscn` starts `scripts/main.gd`; authoritative flight/safety lives in `scripts/flight/`, shared SDF/deformation state in `scripts/world/`, cameras in `scripts/view/`, Traveler data in `scripts/travelers/` and `resources/travelers/`, Survival logic in `scripts/gameplay/`, and GPU ray marching in `shaders/fractal_flight.gdshader`. Preserve both modes, deterministic world calculations, adaptive quality, browser audio activation, and localized corridor opening. Do not reintroduce ships, cockpits, camera-owned movement, or decorative-geometry collision.
 
 Treat `.godot/` and `build/` as generated state. Do not commit builds, APKs, PCKs, ZIPs, signing material, SDK paths, or credentials. Do not rewrite Git history, change repository visibility, enable Pages, publish releases, push tags, or change the Android package identity without owner authorization. Never claim physical-device testing that was not performed.
 
@@ -16,6 +16,9 @@ godot --path .
 godot --headless --path . --quit-after 1
 godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
 godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+godot --headless --path . --script res://scripts/tests/traveler_architecture_test.gd
+godot --headless --path . --script res://scripts/tests/world_query_test.gd
+godot --headless --path . --script res://scripts/tests/traveler_integration_test.gd
 godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
 godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
 godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
@@ -33,7 +36,7 @@ Use Godot shader style in `.gdshader` files and descriptive `snake_case` uniform
 
 ## Testing Guidelines
 
-Run the headless startup check and relevant native smoke/integration scripts before submitting. Add regression tests for deterministic logic, settings, platform decisions, and input normalization. Before release, exercise steering, throttle, HUD hiding, reset, quality selection, reduced motion, browser audio, resize/fullscreen, and both modes. For rendering/UI changes, test portrait and landscape on physical Android hardware and record performance, heat, artifacts, crashes, and corridor failures in `DEVICE_TEST_MATRIX.md`; emulators are not sufficient for performance claims.
+Run the headless startup check and relevant native smoke/integration scripts before submitting. Add regression tests for deterministic logic, settings, platform decisions, input normalization, view invariants, SDF safety, and resource fallback. Collision/query accuracy must remain independent of graphics quality. Before release, exercise steering, throttle, both views, both Travelers, camera retraction, reset, quality selection, reduced motion, browser audio, resize/fullscreen, and both modes. For rendering/UI changes, test portrait and landscape on physical Android hardware and record performance, heat, artifacts, crashes, camera/corridor failures, and Immersive-versus-Traveler cost in `DEVICE_TEST_MATRIX.md`; emulators are not sufficient for performance claims.
 
 ## Commit & Pull Request Guidelines
 

@@ -136,5 +136,7 @@ func _run() -> void:
 
 	print("Survival integration test passed.")
 	main_scene.queue_free()
-	await process_frame
+	for _cleanup_frame in range(4):
+		await process_frame
+	await create_timer(0.10).timeout
 	quit()

@@ -2,6 +2,8 @@
 
 > **KaleiDrift mode amendment:** The product now contains two explicit open-world modes. Endless retains every no-collision requirement in this document. Survival preserves unrestricted flight in any 3D direction while adding deterministic spatial obstacles, five integer health points, wall and obstacle damage, temporary hit invulnerability, and a game-over/retry flow. Requirements that prohibit collision punishment apply to Endless only.
 
+> **Traveler architecture amendment:** The player is now a camera-independent flight rig with Immersive and third-person Traveler presentations; ships and cockpit views are excluded. Structural fractal walls use predictive opening, sliding, and recovery without damage in both modes. Survival's deterministic sphere hazards retain damage, health, invulnerability, scoring, and game over. This amendment supersedes earlier wall-damage language.
+
 **Product:** Infinite Fractal Flight Experience  
 **Version:** 0.2  
 **Date:** July 25, 2026  

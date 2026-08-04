@@ -25,8 +25,13 @@ jobs:
       - name: Run deterministic and integration tests
         run: |
           godot --headless --path . --script res://scripts/tests/procedural_music_smoke_test.gd
+          godot --headless --path . --script res://scripts/tests/adaptive_quality_test.gd
+          godot --headless --path . --script res://scripts/tests/performance_diagnostics_test.gd
           godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
           godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+          godot --headless --path . --script res://scripts/tests/traveler_architecture_test.gd
+          godot --headless --path . --script res://scripts/tests/world_query_test.gd
+          godot --headless --path . --script res://scripts/tests/traveler_integration_test.gd
           godot --headless --path . --script res://scripts/tests/platform_smoke_test.gd
           godot --headless --path . --script res://scripts/tests/resource_load_validation.gd
   build-validation:

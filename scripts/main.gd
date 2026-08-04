@@ -24,6 +24,16 @@ const FlightInputAdapterScript := preload("res://scripts/input/flight_input_adap
 const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
 const AdaptiveQualityControllerScript := preload("res://scripts/performance/adaptive_quality_controller.gd")
 const PerformanceDiagnosticsOverlayScript := preload("res://scripts/performance/performance_diagnostics_overlay.gd")
+const PlayerFlightRigScript := preload("res://scripts/flight/player_flight_rig.gd")
+const FlightControllerScript := preload("res://scripts/flight/flight_controller.gd")
+const WorldStateScript := preload("res://scripts/world/world_state.gd")
+const SDFQueryServiceScript := preload("res://scripts/world/sdf_query_service.gd")
+const TravelerSafetyControllerScript := preload("res://scripts/flight/traveler_safety_controller.gd")
+const CorridorOpeningControllerScript := preload("res://scripts/world/corridor_opening_controller.gd")
+const ViewModeControllerScript := preload("res://scripts/view/view_mode_controller.gd")
+const SettingsStoreScript := preload("res://scripts/settings/settings_store.gd")
+const FractalRendererScript := preload("res://scripts/rendering/fractal_renderer.gd")
+const TRAVELER_CATALOG_PATH := "res://resources/travelers/default_catalog.tres"
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
 const MUSIC_REGION_SIZE := 64.0
 const QUALITY_PRESETS := [
@@ -46,6 +56,11 @@ enum GameMode {
 var render_viewport: SubViewport
 var render_rect: ColorRect
 var output_rect: TextureRect
+var traveler_viewport: SubViewport
+var traveler_output_rect: TextureRect
+var traveler_world_root: Node3D
+var traveler_camera: Camera3D
+var traveler_visual: Node3D
 var shader_material: ShaderMaterial
 var hud_layer: CanvasLayer
 var safe_root: MarginContainer
@@ -58,6 +73,10 @@ var game_over_content: VBoxContainer
 var title_label: Label
 var metrics_label: Label
 var performance_diagnostics_toggle: CheckButton
+var view_mode_selector: OptionButton
+var traveler_selector: OptionButton
+var primary_color_picker: ColorPickerButton
+var accent_color_picker: ColorPickerButton
 var diagnostics_overlay
 var status_label: Label
 var throttle_label: Label
@@ -115,6 +134,17 @@ var manual_quality := 1
 var automatic_quality := true
 var quality_controller: AdaptiveQualityController
 var flight_input: FlightInputAdapter
+var flight_rig: PlayerFlightRig
+var flight_controller: FlightController
+var world_state: WorldState
+var sdf_query: SDFQueryService
+var safety_controller: TravelerSafetyController
+var corridor_controller: CorridorOpeningController
+var view_mode_controller: ViewModeController
+var traveler_catalog: TravelerCatalog
+var traveler_definition: TravelerDefinition
+var settings_store
+var fractal_renderer
 var interface_state := InterfaceState.MENU
 var current_game_mode := GameMode.ENDLESS
 var selected_fractal_level := FractalLevelsScript.Type.FOLD
@@ -155,13 +185,34 @@ var _last_shader_world_seed := NAN
 var _last_shader_obstacles: Array[Vector4] = []
 var settings_save_count := 0
 var _application_focused := true
+var _selected_view_mode: StringName = &"immersive"
+var _selected_traveler_id: StringName = &"glowing_orb"
+var _traveler_primary_color := Color(0.18, 0.92, 1.0)
+var _traveler_accent_color := Color(1.0, 0.22, 0.82)
 
 
 func _ready() -> void:
 	current_quality = PlatformCapabilities.default_quality()
 	manual_quality = current_quality
 	flight_input = FlightInputAdapterScript.new()
+	flight_rig = PlayerFlightRigScript.new()
+	flight_rig.name = "PlayerFlightRig"
+	add_child(flight_rig)
+	flight_controller = FlightControllerScript.new()
+	world_state = WorldStateScript.new()
+	world_state.journey_seed = MUSIC_JOURNEY_SEED
+	world_state.variation_seed = fposmod(float(MUSIC_JOURNEY_SEED), 10000.0)
+	sdf_query = SDFQueryServiceScript.new(world_state)
+	safety_controller = TravelerSafetyControllerScript.new()
+	corridor_controller = CorridorOpeningControllerScript.new()
+	view_mode_controller = ViewModeControllerScript.new()
+	settings_store = SettingsStoreScript.new(SETTINGS_PATH)
 	_load_settings()
+	flight_rig.reset_state(camera_position, camera_orientation, speed)
+	_sync_world_state_for_physics()
+	flight_rig.position = sdf_query.find_safe_position(flight_rig.position, safety_controller.collision_radius)
+	flight_rig.validate_safe_transform()
+	camera_position = flight_rig.position
 	quality_controller = AdaptiveQualityControllerScript.new(
 		QUALITY_PRESETS,
 		WEB_TARGET_FRAME_MS if _is_web_platform() else NATIVE_TARGET_FRAME_MS,
@@ -185,6 +236,11 @@ func _ready() -> void:
 	if not PlatformCapabilities.needs_audio_activation():
 		_start_music()
 	_build_render_pipeline()
+	fractal_renderer = FractalRendererScript.new()
+	fractal_renderer.bind(shader_material)
+	traveler_catalog = load(TRAVELER_CATALOG_PATH) as TravelerCatalog
+	_select_traveler(_selected_traveler_id)
+	view_mode_controller.set_view_mode(_selected_view_mode, flight_rig)
 	_build_hud()
 	if is_instance_valid(quality_selector):
 		quality_selector.select(0 if automatic_quality else manual_quality + 1)
@@ -202,6 +258,7 @@ func _ready() -> void:
 		controller_deadzone_slider.value = _controller_deadzone_setting
 	if is_instance_valid(performance_diagnostics_toggle):
 		performance_diagnostics_toggle.button_pressed = _performance_diagnostics_setting
+	_sync_view_controls()
 	_sync_diagnostics_visibility()
 	_update_controller_ui()
 	if is_instance_valid(fractal_selector):
@@ -229,12 +286,29 @@ func _notification(what: int) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if interface_state != InterfaceState.PLAYING or current_game_mode != GameMode.SURVIVAL:
+	if (interface_state != InterfaceState.PLAYING and current_game_mode != GameMode.ENDLESS) or not _application_focused:
 		return
-	var basis := Basis(camera_orientation).orthonormalized()
-	var forward := -basis.z.normalized()
-	survival_session.physics_step(delta, speed, forward)
-	camera_position = survival_session.position
+	_sync_world_state_for_physics()
+	flight_rig.begin_physics_step()
+	var previous_transform := flight_rig.transform
+	if current_game_mode == GameMode.SURVIVAL:
+		survival_session.begin_external_step(delta, flight_rig.position)
+	var desired_velocity := flight_controller.get_desired_velocity(flight_rig)
+	var resolved_velocity := safety_controller.evaluate(flight_rig, sdf_query, desired_velocity, delta)
+	corridor_controller.update(world_state, safety_controller, flight_rig, delta)
+	flight_rig.integrate_velocity(resolved_velocity, delta)
+	safety_controller.recover_if_embedded(flight_rig, sdf_query)
+	if current_game_mode == GameMode.SURVIVAL:
+		if sdf_query.segment_hits_hazard(previous_transform.origin, flight_rig.position, safety_controller.collision_radius):
+			flight_rig.transform = previous_transform
+			flight_rig.orientation = previous_transform.basis.get_rotation_quaternion().normalized()
+			survival_session.register_external_hazard_hit(previous_transform.origin)
+		else:
+			survival_session.complete_external_step(previous_transform.origin, flight_rig.position, flight_rig.requested_speed)
+			world_state.set_obstacles(survival_session.get_shader_obstacles())
+	_sync_world_state_for_physics()
+	camera_position = flight_rig.position
+	camera_orientation = flight_rig.orientation
 
 
 func _process(delta: float) -> void:
@@ -264,21 +338,29 @@ func _process(delta: float) -> void:
 		_controller_ui_elapsed = 0.0
 		_update_controller_ui()
 	elapsed += delta
-	var basis := Basis(camera_orientation).orthonormalized()
+	var window_size := get_viewport().get_visible_rect().size
+	var portrait := window_size.y > window_size.x
+	var presentation := view_mode_controller.update(
+		flight_rig,
+		sdf_query,
+		traveler_definition.camera_distance if traveler_definition != null else 2.8,
+		traveler_definition.camera_height if traveler_definition != null else 0.72,
+		traveler_definition.camera_look_ahead if traveler_definition != null else 1.0,
+		portrait,
+		_reduced_motion_setting,
+		delta
+	)
+	camera_position = presentation.origin
+	camera_orientation = presentation.basis.get_rotation_quaternion().normalized()
+	var basis := presentation.basis.orthonormalized()
 	var forward := -basis.z.normalized()
 	var right := basis.x.normalized()
 	var up := basis.y.normalized()
-	if current_game_mode == GameMode.ENDLESS and _application_focused:
-		camera_position += forward * speed * delta
-	shader_material.set_shader_parameter("camera_position", camera_position)
-	shader_material.set_shader_parameter("camera_forward", forward)
-	shader_material.set_shader_parameter("camera_right", right)
-	shader_material.set_shader_parameter("camera_up", up)
+	fractal_renderer.set_camera_transform(presentation)
 	shader_material.set_shader_parameter("elapsed_time", elapsed)
-	var fractal_info := FractalLevelsScript.region_info(selected_fractal_level, camera_position.z, MUSIC_JOURNEY_SEED)
-	var active_fractal_type := int(fractal_info["active"])
-	var active_fractal_iterations := int(QUALITY_PRESETS[current_quality]["fractal_iterations"])
-	var active_world_seed: float = survival_session.world.world_variation_seed if current_game_mode == GameMode.SURVIVAL else fposmod(float(MUSIC_JOURNEY_SEED), 10000.0)
+	var active_fractal_type := world_state.fractal_type
+	var active_fractal_iterations := WorldState.GEOMETRY_ITERATIONS
+	var active_world_seed: float = world_state.variation_seed
 	if active_fractal_type != _last_shader_fractal_type:
 		shader_material.set_shader_parameter("fractal_type", active_fractal_type)
 		_last_shader_fractal_type = active_fractal_type
@@ -300,6 +382,8 @@ func _process(delta: float) -> void:
 		if shader_obstacles != _last_shader_obstacles:
 			shader_material.set_shader_parameter("survival_obstacles", shader_obstacles)
 			_last_shader_obstacles = shader_obstacles.duplicate()
+	_sync_corridor_shader_parameters()
+	_sync_traveler_presentation(presentation)
 	_hud_elapsed += delta
 	if current_game_mode == GameMode.SURVIVAL and _hud_elapsed >= HUD_UPDATE_SECONDS:
 		_hud_elapsed = 0.0
@@ -348,6 +432,13 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("reset_flight"):
 		_reset_flight()
+		return
+	if event.is_action_pressed("toggle_view") and interface_state == InterfaceState.PLAYING:
+		view_mode_controller.toggle(flight_rig)
+		_selected_view_mode = view_mode_controller.view_mode
+		_sync_view_controls()
+		_save_settings()
+		get_viewport().set_input_as_handled()
 		return
 	# Pointer/touch steering is valid only after a mode has entered active flight.
 	# Ignoring events in menus also prevents a play-button transition from leaving
@@ -398,6 +489,34 @@ func _build_render_pipeline() -> void:
 	output_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	output_rect.texture = render_viewport.get_texture()
 	add_child(output_rect)
+
+	traveler_viewport = SubViewport.new()
+	traveler_viewport.name = "TravelerViewport"
+	traveler_viewport.transparent_bg = true
+	traveler_viewport.own_world_3d = true
+	traveler_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	traveler_viewport.msaa_3d = Viewport.MSAA_2X
+	add_child(traveler_viewport)
+	traveler_world_root = Node3D.new()
+	traveler_world_root.name = "TravelerWorld"
+	traveler_viewport.add_child(traveler_world_root)
+	traveler_camera = Camera3D.new()
+	traveler_camera.name = "TravelerCamera"
+	traveler_camera.fov = 82.0
+	traveler_camera.near = 0.03
+	traveler_camera.far = 50.0
+	traveler_world_root.add_child(traveler_camera)
+	traveler_camera.current = true
+	traveler_output_rect = TextureRect.new()
+	traveler_output_rect.name = "TravelerDisplay"
+	traveler_output_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	traveler_output_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	traveler_output_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	traveler_output_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	traveler_output_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	traveler_output_rect.texture = traveler_viewport.get_texture()
+	traveler_output_rect.visible = false
+	add_child(traveler_output_rect)
 
 
 func _build_hud() -> void:
@@ -617,6 +736,38 @@ func _build_menu_panel(parent: Control) -> void:
 	performance_diagnostics_toggle.tooltip_text = "Always show FPS, frame graph, rendering, HDR, and engine metrics during gameplay"
 	performance_diagnostics_toggle.toggled.connect(_on_performance_diagnostics_toggled)
 	settings_content.add_child(performance_diagnostics_toggle)
+	var traveler_divider := HSeparator.new()
+	settings_content.add_child(traveler_divider)
+	var traveler_title := Label.new()
+	traveler_title.text = "VIEW / TRAVELER"
+	traveler_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	traveler_title.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
+	settings_content.add_child(traveler_title)
+	view_mode_selector = OptionButton.new()
+	view_mode_selector.add_item("Immersive view")
+	view_mode_selector.set_item_metadata(0, "immersive")
+	view_mode_selector.add_item("Traveler view")
+	view_mode_selector.set_item_metadata(1, "traveler")
+	view_mode_selector.item_selected.connect(_on_view_mode_selected)
+	settings_content.add_child(view_mode_selector)
+	traveler_selector = OptionButton.new()
+	if traveler_catalog != null:
+		for definition in traveler_catalog.travelers:
+			if definition != null:
+				traveler_selector.add_item(definition.display_name)
+				traveler_selector.set_item_metadata(traveler_selector.item_count - 1, String(definition.identifier))
+	traveler_selector.item_selected.connect(_on_traveler_selected)
+	settings_content.add_child(traveler_selector)
+	primary_color_picker = ColorPickerButton.new()
+	primary_color_picker.text = "Primary color"
+	primary_color_picker.color = _traveler_primary_color
+	primary_color_picker.color_changed.connect(_on_traveler_primary_color_changed)
+	settings_content.add_child(primary_color_picker)
+	accent_color_picker = ColorPickerButton.new()
+	accent_color_picker.text = "Accent color"
+	accent_color_picker.color = _traveler_accent_color
+	accent_color_picker.color_changed.connect(_on_traveler_accent_color_changed)
+	settings_content.add_child(accent_color_picker)
 	var audio_divider := HSeparator.new()
 	settings_content.add_child(audio_divider)
 	var audio_title := Label.new()
@@ -821,13 +972,8 @@ func _build_gameplay_overlay() -> void:
 
 
 func _apply_steering_delta(delta_pixels: Vector2) -> void:
-	const SENSITIVITY := 0.0035
-	var basis := Basis(camera_orientation).orthonormalized()
-	var horizontal_rotation := Quaternion(basis.y, -delta_pixels.x * SENSITIVITY)
-	camera_orientation = (horizontal_rotation * camera_orientation).normalized()
-	basis = Basis(camera_orientation).orthonormalized()
-	var vertical_rotation := Quaternion(basis.x, -delta_pixels.y * SENSITIVITY)
-	camera_orientation = (vertical_rotation * camera_orientation).normalized()
+	flight_controller.apply_steering_delta(flight_rig, delta_pixels)
+	camera_orientation = flight_rig.orientation
 
 
 func _is_over_hud_control(position: Vector2) -> bool:
@@ -845,6 +991,7 @@ func _is_over_hud_control(position: Vector2) -> bool:
 
 func _on_speed_changed(value: float) -> void:
 	speed = value
+	flight_controller.set_speed(flight_rig, value)
 	if is_instance_valid(speed_readout):
 		speed_readout.text = "%.2f×" % speed
 
@@ -1013,6 +1160,30 @@ func _on_performance_diagnostics_toggled(enabled: bool) -> void:
 	_save_settings()
 
 
+func _on_view_mode_selected(index: int) -> void:
+	var value := StringName(str(view_mode_selector.get_item_metadata(index)))
+	view_mode_controller.set_view_mode(value, flight_rig)
+	_selected_view_mode = view_mode_controller.view_mode
+	_save_settings()
+
+
+func _on_traveler_selected(index: int) -> void:
+	_select_traveler(StringName(str(traveler_selector.get_item_metadata(index))))
+	_save_settings()
+
+
+func _on_traveler_primary_color_changed(value: Color) -> void:
+	_traveler_primary_color = value
+	_configure_traveler_visual()
+	_save_settings()
+
+
+func _on_traveler_accent_color_changed(value: Color) -> void:
+	_traveler_accent_color = value
+	_configure_traveler_visual()
+	_save_settings()
+
+
 func _on_viewport_size_changed() -> void:
 	_resize_render_target()
 	_update_safe_layout()
@@ -1083,7 +1254,7 @@ func _update_safe_layout() -> void:
 	gameplay_menu_button.offset_right = gameplay_menu_button.offset_left + gameplay_menu_button.custom_minimum_size.x
 	gameplay_menu_button.offset_bottom = gameplay_menu_button.offset_top + touch_height
 	var diagnostics_width := minf(float(safe_rect.size.x - padding * 2), (300.0 if portrait else 410.0) * ui_scale)
-	var diagnostics_height := (190.0 if portrait else 170.0) * ui_scale
+	var diagnostics_height := (300.0 if portrait else 270.0) * ui_scale
 	diagnostics_overlay.offset_left = float(safe_rect.position.x + padding)
 	diagnostics_overlay.offset_top = float(safe_rect.end.y - padding) - diagnostics_height
 	diagnostics_overlay.offset_right = diagnostics_overlay.offset_left + diagnostics_width
@@ -1092,6 +1263,8 @@ func _update_safe_layout() -> void:
 	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
 	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	performance_diagnostics_toggle.custom_minimum_size = Vector2(0.0, touch_height)
+	for traveler_control in [view_mode_selector, traveler_selector, primary_color_picker, accent_color_picker]:
+		traveler_control.custom_minimum_size = Vector2(0.0, touch_height)
 	music_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	music_volume_slider.custom_minimum_size = Vector2(0.0, 32.0 * ui_scale)
 	for control in [hdr_mode_selector, tone_map_selector, hdr_reset_button]:
@@ -1123,6 +1296,8 @@ func _update_safe_layout() -> void:
 	quality_selector.add_theme_font_size_override("font_size", body_font)
 	reduced_motion_toggle.add_theme_font_size_override("font_size", body_font)
 	performance_diagnostics_toggle.add_theme_font_size_override("font_size", body_font)
+	for traveler_control in [view_mode_selector, traveler_selector, primary_color_picker, accent_color_picker]:
+		traveler_control.add_theme_font_size_override("font_size", body_font)
 	music_toggle.add_theme_font_size_override("font_size", body_font)
 	music_volume_label.add_theme_font_size_override("font_size", body_font)
 	hdr_mode_selector.add_theme_font_size_override("font_size", body_font)
@@ -1156,6 +1331,8 @@ func _resize_render_target() -> void:
 	)
 	var target := Vector2i(maxi(1, roundi(window_size.x * scale)), maxi(1, roundi(window_size.y * scale)))
 	render_viewport.size = target
+	if is_instance_valid(traveler_viewport):
+		traveler_viewport.size = target
 	render_rect.size = Vector2(target)
 	shader_material.set_shader_parameter("viewport_size", Vector2(target))
 
@@ -1307,8 +1484,8 @@ func _start_music() -> void:
 
 
 func _load_settings() -> void:
-	var config := ConfigFile.new()
-	if config.load(SETTINGS_PATH) != OK:
+	var config: ConfigFile = settings_store.load_config()
+	if not config.has_section(SETTINGS_SECTION):
 		return
 	hdr_mode = clampi(int(config.get_value(SETTINGS_SECTION, "hdr_mode", HDR_MODE_AUTO)), HDR_MODE_AUTO, HDR_MODE_OFF)
 	var saved_quality := AdaptiveQualityControllerScript.resolve_saved_quality(
@@ -1333,6 +1510,16 @@ func _load_settings() -> void:
 	_controller_deadzone_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_deadzone", FlightInputAdapterScript.DEFAULT_DEADZONE)), 0.05, 0.60)
 	_controller_outer_deadzone_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_outer_deadzone", FlightInputAdapterScript.DEFAULT_OUTER_DEADZONE)), 0.0, 0.25)
 	_controller_response_curve_setting = clampf(float(config.get_value(SETTINGS_SECTION, "controller_response_curve", FlightInputAdapterScript.DEFAULT_RESPONSE_CURVE)), 0.5, 2.0)
+	_selected_view_mode = StringName(str(config.get_value(SETTINGS_SECTION, "view_mode", "immersive")))
+	if _selected_view_mode != &"traveler":
+		_selected_view_mode = &"immersive"
+	_selected_traveler_id = StringName(str(config.get_value(SETTINGS_SECTION, "traveler_id", "glowing_orb")))
+	var saved_primary = config.get_value(SETTINGS_SECTION, "traveler_primary_color", _traveler_primary_color)
+	if saved_primary is Color:
+		_traveler_primary_color = saved_primary
+	var saved_accent = config.get_value(SETTINGS_SECTION, "traveler_accent_color", _traveler_accent_color)
+	if saved_accent is Color:
+		_traveler_accent_color = saved_accent
 	var saved_calibration = config.get_value(SETTINGS_SECTION, "controller_calibration", {})
 	if saved_calibration is Dictionary:
 		flight_input.calibration_offsets = saved_calibration
@@ -1358,7 +1545,12 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "controller_outer_deadzone", _controller_outer_deadzone_setting)
 	config.set_value(SETTINGS_SECTION, "controller_response_curve", _controller_response_curve_setting)
 	config.set_value(SETTINGS_SECTION, "controller_calibration", flight_input.calibration_offsets if is_instance_valid(flight_input) else {})
-	config.save(SETTINGS_PATH)
+	config.set_value(SETTINGS_SECTION, "settings_schema_version", 2)
+	config.set_value(SETTINGS_SECTION, "view_mode", String(_selected_view_mode))
+	config.set_value(SETTINGS_SECTION, "traveler_id", String(_selected_traveler_id))
+	config.set_value(SETTINGS_SECTION, "traveler_primary_color", _traveler_primary_color)
+	config.set_value(SETTINGS_SECTION, "traveler_accent_color", _traveler_accent_color)
+	settings_store.save_config(config)
 
 
 func _update_metrics(latest_frame_ms: float) -> void:
@@ -1375,7 +1567,7 @@ func _update_metrics(latest_frame_ms: float) -> void:
 	if is_instance_valid(diagnostics_overlay):
 		var static_memory_mb := Performance.get_monitor(Performance.MEMORY_STATIC) / (1024.0 * 1024.0)
 		diagnostics_overlay.set_details(
-			"%d FPS  %.1f ms  p90 %.1f  p95 %.1f  %s\n%s %s  %.2fx  %dx%d  %d steps  %s\n%s  %.1fx/%.1fx  %s / %s\nDraw %d  primitives %d  memory %.1f MB  nodes %d  resources %d" % [
+			"%d FPS  %.1f ms  p90 %.1f  p95 %.1f  %s\n%s %s  %.2fx  %dx%d  %d steps  %s\n%s  %.1fx/%.1fx  %s / %s\nDraw %d  primitives %d  memory %.1f MB  nodes %d  resources %d\nView %s  Traveler %s  radius %.2f\nClear %.3f / %.3f  predicted %.3f  look %.2f  probes %d\nCorridor risk %.2f  strength %.2f  radius %.2f\nSafety %s  avoidance %s  recovery %s  safe age %.1fs\nCamera desired %.2f  actual %.2f  obstruction %.3f  collision %dus" % [
 				Engine.get_frames_per_second(), latest_frame_ms,
 				quality_controller.get_percentile(0.90), quality_controller.get_percentile(0.95), target_state,
 				str(preset["name"]), "AUTO" if automatic_quality else "MANUAL",
@@ -1385,7 +1577,15 @@ func _update_metrics(latest_frame_ms: float) -> void:
 				int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 				int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)), static_memory_mb,
 				int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
-				int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT))
+				int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT)),
+				String(view_mode_controller.view_mode), String(_selected_traveler_id), safety_controller.collision_radius,
+				safety_controller.current_clearance, safety_controller.combined_clearance,
+				safety_controller.minimum_predicted_clearance, safety_controller.lookahead_distance, safety_controller.probe_count,
+				safety_controller.corridor_risk, world_state.corridor_strength, world_state.corridor_radius,
+				safety_controller.state_name(), "on" if safety_controller.avoidance_active else "off", safety_controller.recovery_stage,
+				flight_rig.last_safe_age,
+				view_mode_controller.camera_controller.desired_distance, view_mode_controller.camera_controller.actual_distance,
+				view_mode_controller.camera_controller.obstruction_clearance, safety_controller.collision_cpu_us
 			]
 		)
 
@@ -1439,7 +1639,7 @@ func _start_survival() -> void:
 	# first frame and strand the player inside a wall.
 	var active_level := _get_survival_fractal_level(Vector3(0.0, 0.0, 2.0))
 	for _settle_attempt in range(2):
-		survival_session.start(active_level, int(QUALITY_PRESETS[current_quality]["fractal_iterations"]))
+		survival_session.start(active_level, WorldState.GEOMETRY_ITERATIONS)
 		var spawn_level := _get_survival_fractal_level(survival_session.position)
 		if spawn_level == active_level:
 			break
@@ -1450,6 +1650,12 @@ func _start_survival() -> void:
 		spawn_up = Vector3.FORWARD
 	camera_orientation = Basis.looking_at(spawn_forward, spawn_up).get_rotation_quaternion().normalized()
 	camera_position = survival_session.position
+	flight_rig.reset_state(camera_position, camera_orientation, speed)
+	_sync_world_state_for_physics()
+	flight_rig.position = sdf_query.find_safe_position(flight_rig.position, safety_controller.collision_radius)
+	flight_rig.validate_safe_transform()
+	survival_session.position = flight_rig.position
+	camera_position = flight_rig.position
 	survival_button.text = "◇  Resume Survival"
 	_start_playing()
 
@@ -1520,12 +1726,17 @@ func _reset_flight() -> void:
 func _reset_endless_flight() -> void:
 	camera_position = Vector3(0.0, 0.0, 2.0)
 	camera_orientation = Quaternion.IDENTITY
+	flight_rig.reset_state(camera_position, camera_orientation, speed)
+	_sync_world_state_for_physics()
+	flight_rig.position = sdf_query.find_safe_position(flight_rig.position, safety_controller.collision_radius)
+	flight_rig.validate_safe_transform()
+	camera_position = flight_rig.position
 
 
 func _update_music_context() -> void:
 	if not is_instance_valid(music_controller):
 		return
-	var region_coordinate := (camera_position.z + MUSIC_REGION_SIZE) / MUSIC_REGION_SIZE
+	var region_coordinate := (flight_rig.position.z + MUSIC_REGION_SIZE) / MUSIC_REGION_SIZE
 	var region_id := floori(region_coordinate)
 	var region_fraction := region_coordinate - floorf(region_coordinate)
 	var boundary_distance := minf(region_fraction, 1.0 - region_fraction)
@@ -1539,7 +1750,7 @@ func _update_music_context() -> void:
 		)
 	var proximity := 0.0
 	if current_game_mode == GameMode.SURVIVAL and is_instance_valid(survival_session):
-		var clearance: float = survival_session.world.get_world_sdf(camera_position)
+		var clearance: float = sdf_query.get_structure_sdf(flight_rig.position, true)
 		proximity = 1.0 - smoothstep(0.25, 1.5, clearance)
 	var context := MusicContext.new(
 		MUSIC_JOURNEY_SEED,
@@ -1574,6 +1785,83 @@ func _sync_gameplay_menu_visibility() -> void:
 		gameplay_menu_button.visible = false
 		return
 	gameplay_menu_button.visible = interface_state == InterfaceState.PLAYING and not PlatformCapabilities.is_web_fullscreen()
+
+
+func _sync_world_state_for_physics() -> void:
+	var info := FractalLevelsScript.region_info(selected_fractal_level, flight_rig.position.z, MUSIC_JOURNEY_SEED)
+	world_state.region_id = int(info["id"])
+	world_state.fractal_type = int(info["active"])
+	world_state.geometry_iterations = WorldState.GEOMETRY_ITERATIONS
+	world_state.survival_mode = current_game_mode == GameMode.SURVIVAL
+	if world_state.survival_mode:
+		survival_session.set_fractal_level(world_state.fractal_type)
+		survival_session.set_fractal_iterations(WorldState.GEOMETRY_ITERATIONS)
+		survival_session.world.update(flight_rig.position)
+		world_state.variation_seed = survival_session.world.world_variation_seed
+		world_state.set_obstacles(survival_session.get_shader_obstacles())
+	else:
+		world_state.variation_seed = fposmod(float(MUSIC_JOURNEY_SEED), 10000.0)
+		world_state.clear_obstacles()
+
+
+func _sync_corridor_shader_parameters() -> void:
+	fractal_renderer.set_corridor(world_state)
+
+
+func _select_traveler(identifier: StringName) -> void:
+	if traveler_catalog == null:
+		return
+	traveler_definition = traveler_catalog.find_definition(identifier)
+	if traveler_definition == null:
+		return
+	_selected_traveler_id = traveler_definition.identifier
+	safety_controller.set_collision_radius(traveler_definition.normalized_collision_radius())
+	if is_instance_valid(traveler_visual):
+		traveler_visual.queue_free()
+	traveler_visual = traveler_definition.visual_scene.instantiate() as Node3D
+	if traveler_visual == null:
+		return
+	traveler_visual.name = "TravelerVisual"
+	traveler_world_root.add_child(traveler_visual)
+	if traveler_visual.has_method("set_visual_scale"):
+		traveler_visual.set_visual_scale(traveler_definition.visual_scale)
+	_configure_traveler_visual()
+	_sync_view_controls()
+
+
+func _configure_traveler_visual() -> void:
+	if is_instance_valid(traveler_visual) and traveler_visual.has_method("configure"):
+		traveler_visual.configure(_traveler_primary_color, _traveler_accent_color, traveler_definition.glow_intensity)
+
+
+func _sync_traveler_presentation(presentation: Transform3D) -> void:
+	if not is_instance_valid(traveler_viewport):
+		return
+	var traveler_enabled := view_mode_controller.view_mode == ViewModeController.TRAVELER and interface_state == InterfaceState.PLAYING
+	traveler_output_rect.visible = traveler_enabled
+	traveler_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if traveler_enabled else SubViewport.UPDATE_DISABLED
+	if not traveler_enabled:
+		return
+	traveler_camera.transform = presentation
+	if is_instance_valid(traveler_visual):
+		traveler_visual.position = flight_rig.position
+		traveler_visual.quaternion = flight_rig.orientation
+		if traveler_visual.has_method("set_flight_state"):
+			traveler_visual.set_flight_state(flight_rig.steering_state, flight_rig.velocity.length())
+
+
+func _sync_view_controls() -> void:
+	if is_instance_valid(view_mode_selector):
+		view_mode_selector.select(1 if _selected_view_mode == &"traveler" else 0)
+	if is_instance_valid(traveler_selector):
+		for index in range(traveler_selector.item_count):
+			if StringName(str(traveler_selector.get_item_metadata(index))) == _selected_traveler_id:
+				traveler_selector.select(index)
+				break
+	if is_instance_valid(primary_color_picker):
+		primary_color_picker.color = _traveler_primary_color
+	if is_instance_valid(accent_color_picker):
+		accent_color_picker.color = _traveler_accent_color
 
 
 func _sync_render_activity() -> void:

@@ -36,6 +36,14 @@ func _ready() -> void:
 	set_process(true)
 
 
+func _exit_tree() -> void:
+	if is_instance_valid(player):
+		player.stop()
+		player.stream = null
+	playback = null
+	bank.streams.clear()
+
+
 func start(journey_seed: int) -> void:
 	composer.configure(journey_seed, context.region_id)
 	_current_region = context.region_id

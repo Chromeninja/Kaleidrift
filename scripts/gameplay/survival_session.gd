@@ -35,11 +35,8 @@ func _ready() -> void:
 	health = HealthComponent.new()
 	health.name = "Health"
 	add_child(health)
-	health.health_changed.connect(
-		func(current: int, maximum: int) -> void:
-			health_changed.emit(current, maximum)
-	)
-	health.damaged.connect(func(_amount: int) -> void: damaged.emit())
+	health.health_changed.connect(_on_health_health_changed)
+	health.damaged.connect(_on_health_damaged)
 	health.depleted.connect(_on_health_depleted)
 
 
@@ -71,8 +68,13 @@ func stop() -> void:
 	active = false
 
 func set_fractal_level(new_fractal_level: int) -> void:
+	if fractal_level == new_fractal_level:
+		return
 	fractal_level = new_fractal_level
 	world.fractal_level = new_fractal_level
+	world.current_cell = SurvivalWorld.EMPTY_CELL
+	world.update(position)
+	_invalidate_shader_obstacles()
 
 
 func set_fractal_iterations(new_fractal_iterations: int) -> void:
@@ -129,6 +131,37 @@ func physics_step(delta: float, forward_speed: float, forward_direction: Vector3
 		score += near_misses * NEAR_MISS_SCORE
 
 
+func begin_external_step(delta: float, rig_position: Vector3) -> void:
+	if not active:
+		return
+	health.tick(delta)
+	position = rig_position
+	world.update(position)
+
+
+func complete_external_step(previous: Vector3, current: Vector3, forward_speed: float) -> void:
+	if not active:
+		return
+	previous_position = previous
+	position = current
+	var movement_distance := previous.distance_to(current)
+	distance_traveled += movement_distance
+	score = maxi(score, roundi(distance_traveled * _speed_multiplier(forward_speed)))
+	world.update(position)
+	var near_misses := world.collect_near_misses(previous, current, PLAYER_RADIUS)
+	if near_misses > 0:
+		score += near_misses * NEAR_MISS_SCORE
+
+
+func register_external_hazard_hit(previous: Vector3) -> void:
+	if not active:
+		return
+	previous_position = previous
+	position = previous
+	recovery_remaining = HIT_RECOVERY_SECONDS
+	health.take_damage(1)
+
+
 func get_shader_obstacles() -> Array[Vector4]:
 	if (
 		_cached_shader_obstacles.is_empty()
@@ -158,3 +191,11 @@ func _speed_multiplier(forward_speed: float) -> float:
 func _on_health_depleted() -> void:
 	active = false
 	game_over.emit(distance_traveled, score)
+
+
+func _on_health_health_changed(current: int, maximum: int) -> void:
+	health_changed.emit(current, maximum)
+
+
+func _on_health_damaged(_amount: int) -> void:
+	damaged.emit()

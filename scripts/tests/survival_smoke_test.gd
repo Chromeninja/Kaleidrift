@@ -146,6 +146,7 @@ func _test_health_invulnerability() -> void:
 	assert(not health.take_damage(1))
 	health.tick(health.invulnerability_seconds)
 	assert(health.take_damage(1))
+	health.free()
 
 
 func _assert_obstacles_match(first: Array, second: Array) -> void:

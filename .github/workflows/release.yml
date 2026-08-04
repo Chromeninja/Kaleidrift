@@ -23,6 +23,9 @@ jobs:
         run: |
           godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
           godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+          godot --headless --path . --script res://scripts/tests/traveler_architecture_test.gd
+          godot --headless --path . --script res://scripts/tests/world_query_test.gd
+          godot --headless --path . --script res://scripts/tests/traveler_integration_test.gd
       - name: Build Windows release
         run: |
           mkdir -p build/windows

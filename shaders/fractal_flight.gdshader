@@ -16,10 +16,12 @@ uniform float world_variation_seed = 0.0;
 uniform int max_steps : hint_range(24, 112, 1) = 72;
 uniform int detail_iterations : hint_range(2, 7, 1) = 5;
 uniform float max_distance : hint_range(24.0, 120.0, 1.0) = 72.0;
-uniform float safe_radius : hint_range(0.8, 4.0, 0.1) = 1.7;
-uniform float corridor_length : hint_range(3.0, 12.0, 0.5) = 6.0;
-uniform float corridor_start : hint_range(0.0, 3.0, 0.1) = 1.1;
-uniform float corridor_trigger_distance : hint_range(0.5, 6.0, 0.25) = 2.5;
+uniform bool corridor_active = false;
+uniform float corridor_strength : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float corridor_radius : hint_range(0.0, 0.7, 0.01) = 0.0;
+uniform vec3 corridor_start_point = vec3(0.0);
+uniform vec3 corridor_mid_point = vec3(0.0);
+uniform vec3 corridor_end_point = vec3(0.0);
 uniform bool reduced_motion = false;
 uniform bool survival_mode = false;
 uniform vec4 survival_obstacles[8];
@@ -92,10 +94,12 @@ float capsule_sdf(vec3 point, vec3 start, vec3 end, float radius) {
 float fractal_fold(vec3 point) {
 	vec3 p = mod(point + 4.0, 8.0) - 4.0;
 	float scale = 1.0;
-	float angle = reduced_motion ? 0.20 : 0.20 + sin(elapsed_time * 0.08) * 0.08;
+	// Structural geometry is fixed and quality-independent. Motion is applied by
+	// palette and presentation effects rather than moving collision surfaces.
+	float angle = 0.20;
 
 	for (int iteration = 0; iteration < 7; iteration++) {
-		if (iteration >= detail_iterations) {
+		if (iteration >= 6) {
 			break;
 		}
 		p = abs(p) - vec3(1.12, 0.96, 1.06);
@@ -203,11 +207,7 @@ float gyroid_sdf(vec3 point) {
 	) / 0.58 - (0.44 + region_wave);
 }
 
-float survival_world_sdf(vec3 point) {
-	// Survival must use the selected fractal too. Keeping this as gyroid_sdf()
-	// made every non-Fold selection look like Kalei Fold.
-	float folded = fractal_sdf(point);
-	float structure = fractal_type != 0 ? folded : min(gyroid_sdf(point), folded);
+float survival_obstacle_sdf(vec3 point) {
 	float obstacle_distance = 10000.0;
 	for (int obstacle_index = 0; obstacle_index < 8; obstacle_index++) {
 		vec4 obstacle = survival_obstacles[obstacle_index];
@@ -221,7 +221,7 @@ float survival_world_sdf(vec3 point) {
 			}
 		}
 	}
-	return min(structure, obstacle_distance);
+	return obstacle_distance;
 }
 
 float world_sdf_base(vec3 point) {
@@ -232,43 +232,25 @@ float world_sdf_base(vec3 point) {
 	return min(gyroid_sdf(point), folded);
 }
 
-float corridor_activation_for_frame() {
-	float forward_clearance = world_sdf_base(camera_position + camera_forward * corridor_start);
-	return 1.0 - smoothstep(
-		0.0,
-		corridor_trigger_distance,
-		max(forward_clearance, 0.0)
-	);
-}
-
-float world_sdf(vec3 point, float corridor_activation) {
-	if (survival_mode) {
-		return survival_world_sdf(point);
-	}
-
+float world_sdf(vec3 point) {
 	float structure = world_sdf_base(point);
-	// Keep the opening local to the player's intended line of travel. The old
-	// camera-to-10-unit capsule was always active and made the world look hollow
-	// long before the player was close enough to need an opening.
-	vec3 corridor_start_point = camera_position + camera_forward * corridor_start;
-	vec3 corridor_end = camera_position + camera_forward * (corridor_start + corridor_length);
-	float corridor = capsule_sdf(
-		point,
-		corridor_start_point,
-		corridor_end,
-		safe_radius * 0.72
-	);
-	float opened_structure = max(structure, -corridor);
-	return mix(structure, opened_structure, corridor_activation);
+	if (corridor_active && corridor_strength > 0.0001) {
+		float corridor = min(
+			capsule_sdf(point, corridor_start_point, corridor_mid_point, corridor_radius),
+			capsule_sdf(point, corridor_mid_point, corridor_end_point, corridor_radius)
+		);
+		structure = mix(structure, max(structure, -corridor), corridor_strength);
+	}
+	return survival_mode ? min(structure, survival_obstacle_sdf(point)) : structure;
 }
 
-vec3 estimate_normal(vec3 point, float corridor_activation) {
+vec3 estimate_normal(vec3 point) {
 	vec2 e = vec2(EPSILON, -EPSILON);
 	return normalize(
-		e.xyy * world_sdf(point + e.xyy, corridor_activation)
-		+ e.yyx * world_sdf(point + e.yyx, corridor_activation)
-		+ e.yxy * world_sdf(point + e.yxy, corridor_activation)
-		+ e.xxx * world_sdf(point + e.xxx, corridor_activation)
+		e.xyy * world_sdf(point + e.xyy)
+		+ e.yyx * world_sdf(point + e.yyx)
+		+ e.yxy * world_sdf(point + e.yxy)
+		+ e.xxx * world_sdf(point + e.xxx)
 	);
 }
 
@@ -281,7 +263,8 @@ vec3 region_color(vec3 point, float travel_distance, vec3 normal) {
 	float transition = smoothstep(0.15, 0.85, fract((point.z + 64.0) / 64.0));
 	float phase_a = region * 0.173;
 	float phase_b = (region + 1.0) * 0.173;
-	float detail = travel_distance * 0.028 + dot(point, vec3(0.031, 0.047, 0.037));
+	float visual_motion = reduced_motion ? 0.0 : sin(elapsed_time * 0.08) * 0.08;
+	float detail = travel_distance * 0.028 + dot(point, vec3(0.031, 0.047, 0.037)) + visual_motion;
 	vec3 a = palette(detail + phase_a, vec3(0.46), vec3(0.44), vec3(1.0), vec3(0.00, 0.14, 0.31));
 	vec3 b = palette(detail + phase_b, vec3(0.46), vec3(0.44), vec3(1.0), vec3(0.48, 0.06, 0.73));
 	vec3 base = mix(a, b, transition);
@@ -386,19 +369,12 @@ void fragment() {
 	float glow_accumulator = 0.0;
 	bool hit = false;
 	vec3 point = camera_position;
-	// This value is constant for the entire ray. Previously its full fractal SDF
-	// was recomputed for every march step and every normal sample.
-	float corridor_activation = 0.0;
-	if (!survival_mode) {
-		corridor_activation = corridor_activation_for_frame();
-	}
-
 	for (int step_index = 0; step_index < 112; step_index++) {
 		if (step_index >= max_steps || distance_traveled >= max_distance) {
 			break;
 		}
 		point = camera_position + ray_direction * distance_traveled;
-		float distance_to_surface = world_sdf(point, corridor_activation);
+		float distance_to_surface = world_sdf(point);
 		glow_accumulator += exp(-abs(distance_to_surface) * 2.4) * 0.006;
 		if (distance_to_surface < EPSILON * max(1.0, distance_traveled * 0.10)) {
 			hit = true;
@@ -412,7 +388,7 @@ void fragment() {
 	vec3 color = mix(background_bottom, background_top, clamp(UV.y, 0.0, 1.0));
 
 	if (hit) {
-		vec3 normal = estimate_normal(point, corridor_activation);
+		vec3 normal = estimate_normal(point);
 		color = region_color(point, distance_traveled, normal);
 		float fog = 1.0 - exp(-distance_traveled * 0.032);
 		color = mix(color, background_top, fog);

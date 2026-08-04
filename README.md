@@ -13,6 +13,8 @@ KaleiDrift is a visually reactive flight game with two complementary modes:
 
 KaleiDrift combines free flight with an evolving psychedelic environment. Both modes allow unrestricted three-dimensional exploration. Endless is low pressure; Survival adds readable hazards, health, score, near-miss rewards, and deterministic challenge without changing the world's identity.
 
+The player is a camera-independent flight rig, not a ship. Immersive view preserves the original body-free experience. Traveler view follows the same rig behind a replaceable abstract visual; the initial catalog contains a glowing orb and geometric bird with customizable primary and accent colors.
+
 When a player approaches a surface, the environment opens or deforms to preserve a traversable path. The world should remain visually interesting without becoming punitive or interrupting forward motion.
 
 ## Current Prototype
@@ -35,6 +37,10 @@ Implemented or under active validation:
 - Reduced-motion visual option
 - Live FPS, frame-time, render-resolution, and ray-step information
 - Optional persisted developer diagnostics with a rolling frame-time graph, engine metrics, and honest HDR output state
+- Immersive and third-person Traveler views over one authoritative flight rig
+- Resource-driven glowing-orb and geometric-bird placeholder Travelers with persisted colors
+- Predictive swept-sphere safety, risk-based localized opening, tangent sliding, and last-safe recovery
+- SDF-based third-person camera retraction without camera-driven corridor enlargement
 - Endless and Survival mode selection
 - Deterministic open-world Survival geometry and spatial-cell obstacles shared by rendering and collision
 - Five-point integer health, temporary hit invulnerability, scoring, game over, and retry
@@ -313,6 +319,9 @@ godot --headless --path . --quit-after 1
 godot --headless --path . --script res://scripts/tests/adaptive_quality_test.gd
 godot --headless --path . --script res://scripts/tests/survival_smoke_test.gd
 godot --headless --path . --script res://scripts/tests/survival_integration_test.gd
+godot --headless --path . --script res://scripts/tests/traveler_architecture_test.gd
+godot --headless --path . --script res://scripts/tests/world_query_test.gd
+godot --headless --path . --script res://scripts/tests/traveler_integration_test.gd
 godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
 godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
 godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html
