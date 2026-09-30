@@ -76,14 +76,15 @@ func set_manual_tier(tier: int) -> void:
 func sample(delta: float, frame_ms: float) -> bool:
 	elapsed += delta
 	cooldown_remaining = maxf(cooldown_remaining - delta, 0.0)
-	if not automatic:
-		return false
 	if elapsed < warmup_seconds:
 		return false
 	if is_finite(frame_ms) and frame_ms > 0.0:
 		samples.append(frame_ms)
 		if samples.size() > SAMPLE_LIMIT:
 			samples.pop_front()
+	# Manual quality still needs real frame statistics for diagnostics.
+	if not automatic:
+		return false
 	evaluation_elapsed += delta
 	if evaluation_elapsed < evaluation_seconds or cooldown_remaining > 0.0:
 		return false

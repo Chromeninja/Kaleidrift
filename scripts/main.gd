@@ -35,6 +35,7 @@ const SettingsStoreScript := preload("res://scripts/settings/settings_store.gd")
 const FractalRendererScript := preload("res://scripts/rendering/fractal_renderer.gd")
 const CharacterStoreScript := preload("res://scripts/travelers/character_store.gd")
 const CharacterProfileScript := preload("res://scripts/travelers/character_profile.gd")
+const MenuNavigationControllerScript := preload("res://scripts/ui/menu_navigation_controller.gd")
 const TRAVELER_CATALOG_PATH := "res://resources/travelers/default_catalog.tres"
 const CHARACTERS_PATH := "user://characters.cfg"
 const MUSIC_JOURNEY_SEED := 0x4B414C45494E
@@ -75,11 +76,27 @@ var safe_root: MarginContainer
 var throttle_panel: PanelContainer
 var menu_panel: PanelContainer
 var main_menu_content: VBoxContainer
+var game_select_content: VBoxContainer
+var world_select_content: VBoxContainer
+var pause_content: VBoxContainer
 var settings_scroll: ScrollContainer
 var settings_content: VBoxContainer
+var advanced_settings_scroll: ScrollContainer
+var advanced_settings_content: VBoxContainer
 var character_scroll: ScrollContainer
 var character_content: VBoxContainer
 var game_over_content: VBoxContainer
+var home_play_button: Button
+var worlds_button: Button
+var world_card_buttons: Array[Button] = []
+var game_select_button: Button
+var settings_category_label: Label
+var ui_size_selector: OptionButton
+var high_contrast_toggle: CheckButton
+var control_hints_toggle: CheckButton
+var control_hint_panel: PanelContainer
+var control_hint_label: Label
+var pause_continue_button: Button
 var title_label: Label
 var metrics_label: Label
 var performance_diagnostics_toggle: CheckButton
@@ -172,6 +189,7 @@ var character_store
 var active_character_profile
 var editing_character_profile
 var settings_store
+var menu_navigation
 var fractal_renderer
 var interface_state := InterfaceState.MENU
 var current_game_mode := GameMode.ENDLESS
@@ -214,6 +232,10 @@ var _last_shader_world_seed := NAN
 var _last_shader_obstacles: Array[Vector4] = []
 var settings_save_count := 0
 var _application_focused := true
+var camera_cpu_us := 0
+var render_resize_count := 0
+var last_render_resize_ms := 0
+var _presentation_was_active := false
 var _selected_view_mode: StringName = &"immersive"
 var _selected_traveler_id: StringName = &"glowing_orb"
 var _traveler_primary_color := Color(0.18, 0.92, 1.0)
@@ -223,6 +245,12 @@ var _traveler_trail_style: StringName = &"default"
 var _character_dirty := false
 var _character_back_destination := "menu"
 var _character_loading_editor := false
+var _ui_size_preset := 1
+var _high_contrast_setting := false
+var _control_hints_setting := true
+var _steering_hint_complete := false
+var _speed_hint_complete := false
+var _pause_hint_complete := false
 
 
 func _ready() -> void:
@@ -241,6 +269,8 @@ func _ready() -> void:
 	corridor_controller = CorridorOpeningControllerScript.new()
 	view_mode_controller = ViewModeControllerScript.new()
 	settings_store = SettingsStoreScript.new(SETTINGS_PATH)
+	menu_navigation = MenuNavigationControllerScript.new()
+	menu_navigation.screen_changed.connect(_on_menu_screen_changed)
 	_load_settings()
 	flight_rig.reset_state(camera_position, camera_orientation, speed)
 	_sync_world_state_for_physics()
@@ -278,6 +308,7 @@ func _ready() -> void:
 	_apply_active_character()
 	view_mode_controller.set_view_mode(_selected_view_mode, flight_rig)
 	_build_hud()
+	menu_navigation.reset(MenuNavigationControllerScript.HOME)
 	if is_instance_valid(quality_selector):
 		quality_selector.select(0 if automatic_quality else manual_quality + 1)
 	_resize_render_target()
@@ -294,12 +325,18 @@ func _ready() -> void:
 		controller_deadzone_slider.value = _controller_deadzone_setting
 	if is_instance_valid(performance_diagnostics_toggle):
 		performance_diagnostics_toggle.button_pressed = _performance_diagnostics_setting
+	ui_size_selector.select(_ui_size_preset)
+	high_contrast_toggle.button_pressed = _high_contrast_setting
+	control_hints_toggle.button_pressed = _control_hints_setting
+	_apply_accessibility_theme()
+	_update_mode_card_labels()
 	_sync_view_controls()
 	_sync_diagnostics_visibility()
 	_update_controller_ui()
 	if is_instance_valid(fractal_selector):
 		fractal_selector.select(selected_fractal_level)
 		fractal_description.text = FractalLevelsScript.description(selected_fractal_level)
+		_sync_world_cards()
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
 	get_window().output_max_linear_value_changed.connect(_on_output_max_linear_value_changed)
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
@@ -335,7 +372,7 @@ func _physics_process(delta: float) -> void:
 	flight_rig.integrate_velocity(resolved_velocity, delta)
 	safety_controller.recover_if_embedded(flight_rig, sdf_query)
 	if current_game_mode == GameMode.SURVIVAL:
-		if sdf_query.segment_hits_hazard(previous_transform.origin, flight_rig.position, safety_controller.collision_radius):
+		if survival_session.external_segment_hits_hazard(previous_transform.origin, flight_rig.position):
 			flight_rig.transform = previous_transform
 			flight_rig.orientation = previous_transform.basis.get_rotation_quaternion().normalized()
 			survival_session.register_external_hazard_hit(previous_transform.origin)
@@ -348,6 +385,11 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(delta: float) -> void:
+	if is_instance_valid(home_play_button):
+		var animate_play := home_play_button.visible and not _reduced_motion_setting
+		var pulse := 1.0 + sin(elapsed * 2.2) * 0.012 if animate_play else 1.0
+		home_play_button.scale = Vector2.ONE * pulse
+		home_play_button.pivot_offset = home_play_button.size * 0.5
 	_fullscreen_sync_elapsed += delta
 	if _fullscreen_sync_elapsed >= 0.1:
 		_fullscreen_sync_elapsed = 0.0
@@ -376,22 +418,27 @@ func _process(delta: float) -> void:
 	elapsed += delta
 	var window_size := get_viewport().get_visible_rect().size
 	var portrait := window_size.y > window_size.x
-	var presentation := view_mode_controller.update(
-		flight_rig,
-		sdf_query,
-		traveler_definition.camera_distance if traveler_definition != null else 2.8,
-		traveler_definition.camera_height if traveler_definition != null else 0.72,
-		traveler_definition.camera_look_ahead if traveler_definition != null else 1.0,
-		portrait,
-		_reduced_motion_setting,
-		delta
-	)
+	var presentation: Transform3D = flight_rig.transform
+	var presentation_active := interface_state == InterfaceState.PLAYING and _application_focused
+	camera_cpu_us = 0
+	if presentation_active:
+		if not _presentation_was_active:
+			view_mode_controller.camera_controller.reset_from_transform(flight_rig.transform)
+		var camera_start_us := Time.get_ticks_usec()
+		presentation = view_mode_controller.update(
+			flight_rig,
+			sdf_query,
+			traveler_definition.camera_distance if traveler_definition != null else 2.8,
+			traveler_definition.camera_height if traveler_definition != null else 0.72,
+			traveler_definition.camera_look_ahead if traveler_definition != null else 1.0,
+			portrait,
+			_reduced_motion_setting,
+			delta
+		)
+		camera_cpu_us = Time.get_ticks_usec() - camera_start_us
+	_presentation_was_active = presentation_active
 	camera_position = presentation.origin
 	camera_orientation = presentation.basis.get_rotation_quaternion().normalized()
-	var basis := presentation.basis.orthonormalized()
-	var forward := -basis.z.normalized()
-	var right := basis.x.normalized()
-	var up := basis.y.normalized()
 	fractal_renderer.set_camera_transform(presentation)
 	shader_material.set_shader_parameter("elapsed_time", elapsed)
 	var active_fractal_type := world_state.fractal_type
@@ -450,18 +497,13 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if _is_user_activation_event(event):
 		_start_music()
-	if event is InputEventJoypadButton and event.pressed and interface_state != InterfaceState.PLAYING:
-		if event.button_index == JOY_BUTTON_A:
-			_start_endless()
-			get_viewport().set_input_as_handled()
-			return
 	if event.is_action_pressed("ui_cancel"):
 		_handle_back_command()
 		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("toggle_hud"):
 		if interface_state == InterfaceState.PLAYING:
-			_show_main_menu()
+			_show_pause_menu()
 		else:
 			_start_endless()
 		get_viewport().set_input_as_handled()
@@ -484,7 +526,7 @@ func _input(event: InputEvent) -> void:
 			return
 		if event is InputEventJoypadButton and event.pressed:
 			if event.button_index == JOY_BUTTON_B:
-				_show_main_menu()
+				_show_pause_menu()
 				get_viewport().set_input_as_handled()
 				return
 			if event.button_index == JOY_BUTTON_Y:
@@ -493,6 +535,7 @@ func _input(event: InputEvent) -> void:
 				return
 		var steering_delta := flight_input.consume(event, _is_over_hud_control)
 		if steering_delta != Vector2.ZERO:
+			_complete_control_hint(&"steering")
 			_last_steering_source = "pointer"
 			_record_controller_diagnostic("pointer steering applied")
 			_apply_steering_delta(steering_delta)
@@ -606,6 +649,114 @@ func _apply_mode_button_theme(button: Button, background: Color, border: Color) 
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
 
 
+func _make_picture_button(symbol: String, label: String, description: String) -> Button:
+	var button := Button.new()
+	button.text = "%s   %s\n%s" % [symbol, label, description]
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	button.tooltip_text = description
+	button.accessibility_name = label
+	button.accessibility_description = description
+	button.focus_mode = Control.FOCUS_ALL
+	return button
+
+
+func _make_screen(title: String) -> VBoxContainer:
+	var content := VBoxContainer.new()
+	content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	content.alignment = BoxContainer.ALIGNMENT_CENTER
+	content.add_theme_constant_override("separation", 14)
+	content.visible = false
+	var heading := Label.new()
+	heading.text = title
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 22)
+	heading.add_theme_color_override("font_color", Color(0.86, 0.97, 1.0))
+	content.add_child(heading)
+	return content
+
+
+func _build_game_select_screen(parent: Control) -> void:
+	game_select_content = _make_screen(UICopy.CHOOSE_GAME)
+	parent.add_child(game_select_content)
+	play_button = _make_picture_button("✦", UICopy.EXPLORE, "Fly safely and discover")
+	_apply_mode_button_theme(play_button, Color(0.025, 0.34, 0.40), Color(0.22, 0.92, 0.90))
+	play_button.pressed.connect(_select_game_mode.bind(GameMode.ENDLESS))
+	game_select_content.add_child(play_button)
+	survival_button = _make_picture_button("♥", UICopy.CHALLENGE, "Dodge, protect hearts, score")
+	_apply_mode_button_theme(survival_button, Color(0.48, 0.16, 0.08), Color(1.0, 0.68, 0.20))
+	survival_button.pressed.connect(_select_game_mode.bind(GameMode.SURVIVAL))
+	game_select_content.add_child(survival_button)
+	var go_button := _make_picture_button("▶", UICopy.PLAY, "Start the selected game")
+	go_button.pressed.connect(_start_selected_mode)
+	game_select_content.add_child(go_button)
+	var back_button := Button.new()
+	back_button.text = "←  %s" % UICopy.BACK
+	back_button.pressed.connect(_navigate_back)
+	game_select_content.add_child(back_button)
+
+
+func _build_world_select_screen(parent: Control) -> void:
+	var world_scroll := ScrollContainer.new()
+	world_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	world_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	world_scroll.visible = false
+	parent.add_child(world_scroll)
+	world_select_content = _make_screen(UICopy.WORLDS)
+	world_select_content.visible = true
+	world_select_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	world_scroll.add_child(world_select_content)
+	world_scroll.set_meta("menu_screen", MenuNavigationControllerScript.WORLD_SELECT)
+	var world_symbols := ["◇◇", "▣▣", "●✦", "✧✧", "▦▦", "◇●▦"]
+	for level in range(FractalLevelsScript.Type.MIXED + 1):
+		var world_card := _make_picture_button(world_symbols[level], FractalLevelsScript.display_name(level), FractalLevelsScript.description(level))
+		world_card.pressed.connect(_on_world_card_selected.bind(level))
+		world_select_content.add_child(world_card)
+		world_card_buttons.append(world_card)
+	fractal_selector = OptionButton.new()
+	fractal_selector.accessibility_name = UICopy.WORLDS
+	for level in range(FractalLevelsScript.Type.MIXED + 1):
+		fractal_selector.add_item(FractalLevelsScript.display_name(level), level)
+	fractal_selector.item_selected.connect(_on_fractal_selected)
+	fractal_selector.visible = false
+	world_select_content.add_child(fractal_selector)
+	fractal_description = Label.new()
+	fractal_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	fractal_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	fractal_description.add_theme_color_override("font_color", Color(0.78, 0.90, 0.98))
+	world_select_content.add_child(fractal_description)
+	var play_world_button := _make_picture_button("▶", UICopy.PLAY, "Fly in this world")
+	play_world_button.pressed.connect(_start_selected_mode)
+	world_select_content.add_child(play_world_button)
+	var back_button := Button.new()
+	back_button.text = "←  %s" % UICopy.BACK
+	back_button.pressed.connect(_navigate_back)
+	world_select_content.add_child(back_button)
+
+
+func _build_pause_screen(parent: Control) -> void:
+	pause_content = _make_screen("PAUSED")
+	parent.add_child(pause_content)
+	pause_continue_button = _make_picture_button("▶", UICopy.KEEP_PLAYING, "Go back to flying")
+	_apply_mode_button_theme(pause_continue_button, Color(0.025, 0.34, 0.40), Color(0.22, 0.92, 0.90))
+	pause_continue_button.pressed.connect(_resume_playing)
+	pause_content.add_child(pause_continue_button)
+	var restart_button := _make_picture_button("↻", UICopy.START_AGAIN, "Begin this flight again")
+	restart_button.pressed.connect(_reset_and_resume)
+	pause_content.add_child(restart_button)
+	var choose_button := _make_picture_button("◇", UICopy.CHOOSE_GAME, "Pick Explore or Challenge")
+	choose_button.pressed.connect(_show_game_select)
+	pause_content.add_child(choose_button)
+	var settings_pause_button := Button.new()
+	settings_pause_button.text = "♫  ▣   %s" % UICopy.SETTINGS
+	settings_pause_button.pressed.connect(_show_settings)
+	pause_content.add_child(settings_pause_button)
+	var home_button := Button.new()
+	home_button.text = "⌂   %s" % UICopy.HOME
+	home_button.pressed.connect(_show_main_menu)
+	pause_content.add_child(home_button)
+
+
 func _build_throttle(parent: Control) -> void:
 	throttle_panel = PanelContainer.new()
 	throttle_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -673,55 +824,28 @@ func _build_menu_panel(parent: Control) -> void:
 	title_label.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0))
 	main_menu_content.add_child(title_label)
 	var subtitle := Label.new()
-	subtitle.text = "FRACTAL FLIGHT"
+	subtitle.text = "FLY • EXPLORE • PLAY"
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_color_override("font_color", Color(0.55, 0.78, 0.94))
 	main_menu_content.add_child(subtitle)
-	var fractal_title := Label.new()
-	fractal_title.text = "FLIGHT WORLD"
-	fractal_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fractal_title.add_theme_color_override("font_color", Color(0.72, 0.9, 1.0))
-	main_menu_content.add_child(fractal_title)
-	fractal_selector = OptionButton.new()
-	for level in range(FractalLevelsScript.Type.MIXED + 1):
-		fractal_selector.add_item(FractalLevelsScript.display_name(level), level)
-	fractal_selector.item_selected.connect(_on_fractal_selected)
-	main_menu_content.add_child(fractal_selector)
-	fractal_description = Label.new()
-	fractal_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fractal_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	fractal_description.add_theme_color_override("font_color", Color(0.68, 0.84, 0.95))
-	main_menu_content.add_child(fractal_description)
-	var endless_description := Label.new()
-	endless_description.text = "ENDLESS\nRelax, explore, and pass through the shifting world."
-	endless_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	endless_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	endless_description.add_theme_color_override("font_color", Color(0.68, 0.84, 0.95))
-	main_menu_content.add_child(endless_description)
-	play_button = Button.new()
-	play_button.text = "∞  Fly Endless"
-	play_button.tooltip_text = "Endless mode: relaxed, collision-free exploration"
-	_apply_mode_button_theme(play_button, Color(0.025, 0.34, 0.40), Color(0.22, 0.92, 0.90))
-	play_button.pressed.connect(_start_endless)
-	main_menu_content.add_child(play_button)
-	var survival_description := Label.new()
-	survival_description.text = "SURVIVAL\nExplore freely, dodge hazards, and protect your health."
-	survival_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	survival_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	survival_description.add_theme_color_override("font_color", Color(0.94, 0.74, 0.82))
-	main_menu_content.add_child(survival_description)
-	survival_button = Button.new()
-	survival_button.text = "◇  Start Survival"
-	survival_button.tooltip_text = "Survival mode: avoid hazards and protect your health"
-	_apply_mode_button_theme(survival_button, Color(0.48, 0.16, 0.08), Color(1.0, 0.68, 0.20))
-	survival_button.pressed.connect(_start_survival)
-	main_menu_content.add_child(survival_button)
+	home_play_button = _make_picture_button("▶", UICopy.PLAY, "Fly with your Traveler")
+	home_play_button.name = "HomePlayButton"
+	home_play_button.custom_minimum_size.y = 92.0
+	_apply_mode_button_theme(home_play_button, Color(0.025, 0.34, 0.40), Color(0.22, 0.92, 0.90))
+	home_play_button.pressed.connect(_start_selected_mode)
+	main_menu_content.add_child(home_play_button)
+	game_select_button = _make_picture_button("◇", UICopy.CHOOSE_GAME, "Pick Explore or Challenge")
+	game_select_button.pressed.connect(_show_game_select)
+	main_menu_content.add_child(game_select_button)
+	worlds_button = _make_picture_button("◉", UICopy.WORLDS, "Pick a fractal world")
+	worlds_button.pressed.connect(_show_world_select)
+	main_menu_content.add_child(worlds_button)
 	settings_button = Button.new()
-	settings_button.text = "Settings"
+	settings_button.text = "♫  ▣   %s" % UICopy.SETTINGS
 	settings_button.pressed.connect(_show_settings)
 	main_menu_content.add_child(settings_button)
 	character_button = Button.new()
-	character_button.text = "Character"
+	character_button.text = "●   %s" % UICopy.TRAVELER
 	character_button.pressed.connect(_show_character_screen)
 	main_menu_content.add_child(character_button)
 	exit_button = Button.new()
@@ -729,6 +853,10 @@ func _build_menu_panel(parent: Control) -> void:
 	exit_button.pressed.connect(func() -> void: get_tree().quit())
 	exit_button.visible = not _is_web_platform()
 	main_menu_content.add_child(exit_button)
+
+	_build_game_select_screen(views)
+	_build_world_select_screen(views)
+	_build_pause_screen(views)
 
 	settings_scroll = ScrollContainer.new()
 	settings_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -754,6 +882,25 @@ func _build_menu_panel(parent: Control) -> void:
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.add_theme_color_override("font_color", Color(0.67, 0.83, 0.94))
 	settings_content.add_child(status_label)
+	settings_category_label = Label.new()
+	settings_category_label.text = "ACCESSIBILITY"
+	settings_category_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	settings_category_label.add_theme_color_override("font_color", Color(0.86, 0.97, 1.0))
+	settings_content.add_child(settings_category_label)
+	ui_size_selector = OptionButton.new()
+	ui_size_selector.add_item("A  Small", 0)
+	ui_size_selector.add_item("A  Default", 1)
+	ui_size_selector.add_item("A  Large", 2)
+	ui_size_selector.item_selected.connect(_on_ui_size_selected)
+	settings_content.add_child(ui_size_selector)
+	high_contrast_toggle = CheckButton.new()
+	high_contrast_toggle.text = "◐  High contrast"
+	high_contrast_toggle.toggled.connect(_on_high_contrast_toggled)
+	settings_content.add_child(high_contrast_toggle)
+	control_hints_toggle = CheckButton.new()
+	control_hints_toggle.text = "☝  Show control pictures"
+	control_hints_toggle.toggled.connect(_on_control_hints_toggled)
+	settings_content.add_child(control_hints_toggle)
 	var divider := HSeparator.new()
 	settings_content.add_child(divider)
 	quality_label = Label.new()
@@ -890,9 +1037,52 @@ func _build_menu_panel(parent: Control) -> void:
 	hdr_reset_button.pressed.connect(_reset_hdr_settings)
 	settings_content.add_child(hdr_reset_button)
 	settings_back_button = Button.new()
-	settings_back_button.text = "Back"
-	settings_back_button.pressed.connect(_show_main_menu)
+	settings_back_button.text = "←  %s" % UICopy.BACK
+	settings_back_button.pressed.connect(_navigate_back)
 	settings_content.add_child(settings_back_button)
+	var advanced_button := Button.new()
+	advanced_button.text = "▦  ADVANCED"
+	advanced_button.tooltip_text = "Technical picture and controller tools"
+	advanced_button.pressed.connect(_show_advanced_settings)
+	settings_content.add_child(advanced_button)
+	settings_content.move_child(advanced_button, settings_content.get_child_count() - 2)
+
+	advanced_settings_scroll = ScrollContainer.new()
+	advanced_settings_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	advanced_settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	advanced_settings_scroll.visible = false
+	views.add_child(advanced_settings_scroll)
+	advanced_settings_content = VBoxContainer.new()
+	advanced_settings_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	advanced_settings_content.add_theme_constant_override("separation", 9)
+	advanced_settings_scroll.add_child(advanced_settings_content)
+	var advanced_title := Label.new()
+	advanced_title.text = "▦  ADVANCED"
+	advanced_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	advanced_settings_content.add_child(advanced_title)
+	for advanced_control in [
+		performance_diagnostics_toggle,
+		controller_deadzone_label,
+		controller_deadzone_slider,
+		controller_calibration_label,
+		controller_calibrate_button,
+		controller_reset_button,
+		controller_diagnostics_label,
+		hdr_mode_selector,
+		hdr_status_label,
+		hdr_values_label,
+		reference_white_slider,
+		peak_brightness_slider,
+		tone_map_selector,
+		highlight_slider,
+		gamut_slider,
+		hdr_reset_button,
+	]:
+		advanced_control.reparent(advanced_settings_content)
+	var advanced_back := Button.new()
+	advanced_back.text = "←  %s" % UICopy.BACK
+	advanced_back.pressed.connect(_navigate_back)
+	advanced_settings_content.add_child(advanced_back)
 
 	character_scroll = ScrollContainer.new()
 	character_scroll.name = "CharacterScreen"
@@ -1008,6 +1198,7 @@ func _build_menu_panel(parent: Control) -> void:
 	character_delete_dialog.title = "Delete character"
 	character_delete_dialog.dialog_text = "Delete this character profile? This cannot be undone."
 	character_delete_dialog.get_ok_button().text = "Delete"
+	character_delete_dialog.get_cancel_button().text = "Keep"
 	character_delete_dialog.confirmed.connect(_delete_character_profile)
 	add_child(character_delete_dialog)
 
@@ -1018,7 +1209,7 @@ func _build_menu_panel(parent: Control) -> void:
 	game_over_content.visible = false
 	views.add_child(game_over_content)
 	game_over_title = Label.new()
-	game_over_title.text = "RUN OVER"
+	game_over_title.text = UICopy.GREAT_FLIGHT
 	game_over_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	game_over_title.add_theme_color_override("font_color", Color(1.0, 0.72, 0.78))
 	game_over_content.add_child(game_over_title)
@@ -1027,13 +1218,17 @@ func _build_menu_panel(parent: Control) -> void:
 	game_over_result.add_theme_color_override("font_color", Color(0.80, 0.94, 1.0))
 	game_over_content.add_child(game_over_result)
 	retry_button = Button.new()
-	retry_button.text = "Retry Survival"
+	retry_button.text = "▶   %s" % UICopy.PLAY_AGAIN
 	retry_button.pressed.connect(_start_survival)
 	game_over_content.add_child(retry_button)
 	mode_select_button = Button.new()
-	mode_select_button.text = "Choose Mode"
-	mode_select_button.pressed.connect(_show_main_menu)
+	mode_select_button.text = "◇   %s" % UICopy.CHOOSE_GAME
+	mode_select_button.pressed.connect(_show_game_select)
 	game_over_content.add_child(mode_select_button)
+	var results_home_button := Button.new()
+	results_home_button.text = "⌂   %s" % UICopy.HOME
+	results_home_button.pressed.connect(_show_main_menu)
+	game_over_content.add_child(results_home_button)
 
 
 func _build_gameplay_overlay() -> void:
@@ -1052,12 +1247,24 @@ func _build_gameplay_overlay() -> void:
 
 	gameplay_menu_button = Button.new()
 	gameplay_menu_button.name = "GameplayMenuButton"
-	gameplay_menu_button.text = "☰  Menu"
-	gameplay_menu_button.tooltip_text = "Return to the main menu"
+	gameplay_menu_button.text = "Ⅱ  PAUSE"
+	gameplay_menu_button.tooltip_text = "Pause the flight"
 	gameplay_menu_button.mouse_filter = Control.MOUSE_FILTER_STOP
-	gameplay_menu_button.pressed.connect(_show_main_menu)
+	gameplay_menu_button.pressed.connect(_show_pause_menu)
 	gameplay_overlay.add_child(gameplay_menu_button)
 	gameplay_menu_button.visible = PlatformCapabilities.should_show_inflight_menu()
+	control_hint_panel = PanelContainer.new()
+	control_hint_panel.name = "ControlHint"
+	control_hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hint_style := _panel_style()
+	hint_style.bg_color = Color(0.005, 0.015, 0.035, 0.95)
+	control_hint_panel.add_theme_stylebox_override("panel", hint_style)
+	gameplay_overlay.add_child(control_hint_panel)
+	control_hint_label = Label.new()
+	control_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	control_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	control_hint_label.add_theme_font_size_override("font_size", 18)
+	control_hint_panel.add_child(control_hint_label)
 	diagnostics_overlay = PerformanceDiagnosticsOverlayScript.new()
 	diagnostics_overlay.name = "PerformanceDiagnostics"
 	diagnostics_overlay.visible = false
@@ -1147,10 +1354,7 @@ func _show_character_screen_from(destination: String) -> void:
 	_character_back_destination = destination
 	settings_visible = false
 	character_visible = true
-	main_menu_content.visible = false
-	settings_scroll.visible = false
-	character_scroll.visible = true
-	game_over_content.visible = false
+	menu_navigation.open(MenuNavigationControllerScript.TRAVELER)
 	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_load_character_editor(character_store.get_active_profile(traveler_catalog))
 	_refresh_character_list()
@@ -1217,10 +1421,10 @@ func _duplicate_character_profile() -> void:
 	if character_store.profiles.size() >= CharacterStoreScript.MAX_PROFILES:
 		character_status_label.text = "Character limit reached. Delete a profile to duplicate another."
 		return
-	var duplicate = editing_character_profile.duplicate_profile()
-	duplicate.profile_id = &""
-	duplicate.display_name = "%s Copy" % editing_character_profile.display_name
-	if not character_store.add_profile(duplicate, traveler_catalog):
+	var duplicated_profile = editing_character_profile.duplicate_profile()
+	duplicated_profile.profile_id = &""
+	duplicated_profile.display_name = "%s Copy" % editing_character_profile.display_name
+	if not character_store.add_profile(duplicated_profile, traveler_catalog):
 		return
 	var newest = character_store.profiles.back()
 	_load_character_editor(newest)
@@ -1400,6 +1604,8 @@ func _is_over_hud_control(position: Vector2) -> bool:
 func _on_speed_changed(value: float) -> void:
 	speed = value
 	flight_controller.set_speed(flight_rig, value)
+	if interface_state == InterfaceState.PLAYING:
+		_complete_control_hint(&"speed")
 	if is_instance_valid(speed_readout):
 		speed_readout.text = "%.2f×" % speed
 
@@ -1417,10 +1623,22 @@ func _on_quality_selected(index: int) -> void:
 	_save_settings()
 
 func _on_fractal_selected(index: int) -> void:
-	selected_fractal_level = clampi(index, FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED)
+	selected_fractal_level = clampi(index, FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED) as FractalLevelsScript.Type
 	if is_instance_valid(fractal_description):
 		fractal_description.text = FractalLevelsScript.description(selected_fractal_level)
+	_sync_world_cards()
 	_save_settings()
+
+
+func _on_world_card_selected(level: int) -> void:
+	fractal_selector.select(level)
+	_on_fractal_selected(level)
+
+
+func _sync_world_cards() -> void:
+	for level in range(world_card_buttons.size()):
+		var card := world_card_buttons[level]
+		card.text = "%s  %s\n%s" % ["✓" if level == selected_fractal_level else " ", FractalLevelsScript.display_name(level), FractalLevelsScript.description(level)]
 
 
 func _on_reduced_motion_toggled(enabled: bool) -> void:
@@ -1575,6 +1793,62 @@ func _on_view_mode_selected(index: int) -> void:
 	_save_settings()
 
 
+func _complete_control_hint(kind: StringName) -> void:
+	match kind:
+		&"steering": _steering_hint_complete = true
+		&"speed": _speed_hint_complete = true
+		&"pause": _pause_hint_complete = true
+	_update_control_hint()
+	_save_settings()
+
+
+func _update_control_hint() -> void:
+	if not is_instance_valid(control_hint_panel):
+		return
+	control_hint_panel.visible = _control_hints_setting and interface_state == InterfaceState.PLAYING
+	if not control_hint_panel.visible:
+		return
+	if not _steering_hint_complete:
+		control_hint_label.text = "☝  ↔  DRAG TO STEER  ↕"
+	elif not _speed_hint_complete:
+		control_hint_label.text = "↕  MOVE SPEED"
+	elif not _pause_hint_complete:
+		control_hint_label.text = "Ⅱ  PAUSE"
+	else:
+		control_hint_panel.visible = false
+
+
+func _on_ui_size_selected(index: int) -> void:
+	_ui_size_preset = clampi(index, 0, 2)
+	_update_safe_layout()
+	_save_settings()
+
+
+func _on_high_contrast_toggled(enabled: bool) -> void:
+	_high_contrast_setting = enabled
+	_apply_accessibility_theme()
+	_save_settings()
+
+
+func _on_control_hints_toggled(enabled: bool) -> void:
+	_control_hints_setting = enabled
+	_update_control_hint()
+	_save_settings()
+
+
+func _apply_accessibility_theme() -> void:
+	if not is_instance_valid(menu_panel):
+		return
+	var style := _panel_style()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.98) if _high_contrast_setting else Color(0.01, 0.025, 0.06, 0.92)
+	style.border_color = Color.WHITE if _high_contrast_setting else Color(0.42, 0.82, 1.0, 0.55)
+	style.content_margin_left = 24
+	style.content_margin_right = 24
+	style.content_margin_top = 22
+	style.content_margin_bottom = 22
+	menu_panel.add_theme_stylebox_override("panel", style)
+
+
 func _on_viewport_size_changed() -> void:
 	_resize_render_target()
 	_update_safe_layout()
@@ -1589,8 +1863,12 @@ func _update_safe_layout() -> void:
 		var reported_safe_area := DisplayServer.get_display_safe_area()
 		if reported_safe_area.size.x > 0 and reported_safe_area.size.y > 0:
 			safe_rect = reported_safe_area
-	var short_side := float(mini(window_size.x, window_size.y))
-	var ui_scale := clampf(short_side / 720.0, 0.85, 2.2)
+	var short_side: float = float(mini(window_size.x, window_size.y))
+	var preset_scale: float = 1.0
+	match _ui_size_preset:
+		0: preset_scale = 0.90
+		2: preset_scale = 1.18
+	var ui_scale: float = clampf(short_side / 720.0, 0.85, 2.2) * preset_scale
 	var padding := maxi(roundi(14.0 * ui_scale), roundi(short_side * 0.022))
 	safe_root.add_theme_constant_override("margin_left", safe_rect.position.x + padding)
 	safe_root.add_theme_constant_override("margin_top", safe_rect.position.y + padding)
@@ -1598,13 +1876,13 @@ func _update_safe_layout() -> void:
 	safe_root.add_theme_constant_override("margin_bottom", window_size.y - safe_rect.end.y + padding)
 
 	var portrait := window_size.y > window_size.x
-	var available_height := float(safe_rect.size.y - padding * 2)
-	var throttle_width := clampf(
+	var available_height: float = float(safe_rect.size.y - padding * 2)
+	var throttle_width: float = clampf(
 		float(window_size.x) * (0.24 if portrait else 0.13),
 		100.0 * ui_scale,
 		180.0 * ui_scale
 	)
-	var throttle_height := available_height * (0.66 if portrait else 0.82)
+	var throttle_height: float = available_height * (0.66 if portrait else 0.82)
 	throttle_panel.custom_minimum_size = Vector2(throttle_width, throttle_height)
 	throttle_panel.anchor_left = 0.0
 	throttle_panel.anchor_top = 0.5
@@ -1616,12 +1894,12 @@ func _update_safe_layout() -> void:
 	throttle_panel.offset_bottom = throttle_height * 0.5
 	speed_slider.custom_minimum_size = Vector2(64.0 * ui_scale, 180.0 * ui_scale)
 
-	var info_width := clampf(
+	var info_width: float = clampf(
 		float(window_size.x) * (0.60 if portrait else 0.34),
 		250.0 * ui_scale,
 		410.0 * ui_scale
 	)
-	var menu_height := clampf(
+	var menu_height: float = clampf(
 		available_height * (0.78 if portrait else 0.86),
 		390.0 * ui_scale,
 		620.0 * ui_scale
@@ -1631,27 +1909,37 @@ func _update_safe_layout() -> void:
 	menu_panel.offset_top = -menu_height * 0.5
 	menu_panel.offset_right = 0.0
 	menu_panel.offset_bottom = menu_height * 0.5
-	var gameplay_hud_width := 190.0 * ui_scale
-	var gameplay_hud_top := float(safe_rect.position.y + padding)
-	var gameplay_hud_right := float(window_size.x - safe_rect.end.x + padding)
+	var gameplay_hud_width: float = 190.0 * ui_scale
+	var gameplay_hud_top: float = float(safe_rect.position.y + padding)
+	var gameplay_hud_right: float = float(window_size.x - safe_rect.end.x + padding)
 	gameplay_hud_panel.offset_left = -gameplay_hud_width - gameplay_hud_right
 	gameplay_hud_panel.offset_top = gameplay_hud_top
 	gameplay_hud_panel.offset_right = -gameplay_hud_right
 	gameplay_hud_panel.offset_bottom = gameplay_hud_top + 112.0 * ui_scale
-	var touch_height := 50.0 * ui_scale
+	var touch_height: float = 50.0 * ui_scale
 	gameplay_menu_button.custom_minimum_size = Vector2(112.0 * ui_scale, touch_height)
 	gameplay_menu_button.offset_left = float(safe_rect.position.x + padding)
 	gameplay_menu_button.offset_top = float(safe_rect.position.y + padding)
 	gameplay_menu_button.offset_right = gameplay_menu_button.offset_left + gameplay_menu_button.custom_minimum_size.x
 	gameplay_menu_button.offset_bottom = gameplay_menu_button.offset_top + touch_height
-	var diagnostics_width := minf(float(safe_rect.size.x - padding * 2), (300.0 if portrait else 410.0) * ui_scale)
-	var diagnostics_height := (300.0 if portrait else 270.0) * ui_scale
+	control_hint_panel.custom_minimum_size = Vector2(minf(360.0 * ui_scale, float(safe_rect.size.x - padding * 2)), 76.0 * ui_scale)
+	control_hint_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	control_hint_panel.offset_left = -control_hint_panel.custom_minimum_size.x * 0.5
+	control_hint_panel.offset_right = control_hint_panel.custom_minimum_size.x * 0.5
+	control_hint_panel.offset_top = -120.0 * ui_scale
+	control_hint_panel.offset_bottom = -44.0 * ui_scale
+	var diagnostics_width: float = minf(float(safe_rect.size.x - padding * 2), (300.0 if portrait else 410.0) * ui_scale)
+	var diagnostics_height: float = (300.0 if portrait else 270.0) * ui_scale
 	diagnostics_overlay.offset_left = float(safe_rect.position.x + padding)
 	diagnostics_overlay.offset_top = float(safe_rect.end.y - padding) - diagnostics_height
 	diagnostics_overlay.offset_right = diagnostics_overlay.offset_left + diagnostics_width
 	diagnostics_overlay.offset_bottom = float(safe_rect.end.y - padding)
 	diagnostics_overlay.set_ui_scale(ui_scale, portrait)
 	quality_selector.custom_minimum_size = Vector2(0.0, touch_height)
+	fractal_selector.custom_minimum_size = Vector2(0.0, touch_height)
+	ui_size_selector.custom_minimum_size = Vector2(0.0, touch_height)
+	high_contrast_toggle.custom_minimum_size = Vector2(0.0, touch_height)
+	control_hints_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	reduced_motion_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	performance_diagnostics_toggle.custom_minimum_size = Vector2(0.0, touch_height)
 	view_mode_selector.custom_minimum_size = Vector2(0.0, touch_height)
@@ -1664,16 +1952,21 @@ func _update_safe_layout() -> void:
 	for control in [hdr_mode_selector, tone_map_selector, hdr_reset_button]:
 		control.custom_minimum_size = Vector2(0.0, touch_height)
 	for button in [
+		home_play_button,
 		play_button,
 		survival_button,
 		settings_button,
+		game_select_button,
+		worlds_button,
 		character_button,
 		exit_button,
 		settings_back_button,
 		retry_button,
 		mode_select_button,
-	]:
+		]:
 		button.custom_minimum_size = Vector2(0.0, touch_height)
+	for responsive_screen in [game_select_content, world_select_content, pause_content, game_over_content]:
+		_size_screen_controls(responsive_screen, touch_height)
 
 	var body_font := roundi(14.0 * ui_scale)
 	title_label.add_theme_font_size_override("font_size", roundi(22.0 * ui_scale))
@@ -1717,6 +2010,14 @@ func _update_safe_layout() -> void:
 		button.add_theme_font_size_override("font_size", body_font)
 
 
+func _size_screen_controls(node: Node, touch_height: float) -> void:
+	for child in node.get_children():
+		if child is Button or child is OptionButton:
+			child.custom_minimum_size = Vector2(0.0, touch_height)
+		if child.get_child_count() > 0:
+			_size_screen_controls(child, touch_height)
+
+
 func _resize_render_target() -> void:
 	if not is_instance_valid(render_viewport):
 		return
@@ -1727,8 +2028,11 @@ func _resize_render_target() -> void:
 		else float(QUALITY_PRESETS[current_quality]["base_render_scale"])
 	)
 	var target := Vector2i(maxi(1, roundi(window_size.x * scale)), maxi(1, roundi(window_size.y * scale)))
-	render_viewport.size = target
-	if is_instance_valid(traveler_viewport):
+	if render_viewport.size != target:
+		render_viewport.size = target
+		render_resize_count += 1
+		last_render_resize_ms = Time.get_ticks_msec()
+	if is_instance_valid(traveler_viewport) and traveler_viewport.size != target:
 		traveler_viewport.size = target
 	render_rect.size = Vector2(target)
 	shader_material.set_shader_parameter("viewport_size", Vector2(target))
@@ -1892,10 +2196,17 @@ func _load_settings() -> void:
 		QUALITY_PRESETS.size()
 	)
 	manual_quality = int(saved_quality["manual_tier"])
-	selected_fractal_level = clampi(int(config.get_value(SETTINGS_SECTION, "fractal_level", FractalLevelsScript.Type.FOLD)), FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED)
+	selected_fractal_level = clampi(int(config.get_value(SETTINGS_SECTION, "fractal_level", FractalLevelsScript.Type.FOLD)), FractalLevelsScript.Type.FOLD, FractalLevelsScript.Type.MIXED) as FractalLevelsScript.Type
 	automatic_quality = bool(saved_quality["automatic"])
 	current_quality = int(saved_quality["resolved_tier"])
 	_reduced_motion_setting = bool(config.get_value(SETTINGS_SECTION, "reduced_motion", false))
+	current_game_mode = clampi(int(config.get_value(SETTINGS_SECTION, "last_game_mode", GameMode.ENDLESS)), GameMode.ENDLESS, GameMode.SURVIVAL) as GameMode
+	_ui_size_preset = clampi(int(config.get_value(SETTINGS_SECTION, "ui_size_preset", 1)), 0, 2)
+	_high_contrast_setting = bool(config.get_value(SETTINGS_SECTION, "high_contrast", false))
+	_control_hints_setting = bool(config.get_value(SETTINGS_SECTION, "control_hints", true))
+	_steering_hint_complete = bool(config.get_value(SETTINGS_SECTION, "steering_hint_complete", false))
+	_speed_hint_complete = bool(config.get_value(SETTINGS_SECTION, "speed_hint_complete", false))
+	_pause_hint_complete = bool(config.get_value(SETTINGS_SECTION, "pause_hint_complete", false))
 	_music_enabled_setting = bool(config.get_value(SETTINGS_SECTION, "music_enabled", true))
 	_music_volume_setting = clampf(float(config.get_value(SETTINGS_SECTION, "music_volume", 0.7)), 0.0, 1.0)
 	tone_map_mode = clampi(int(config.get_value(SETTINGS_SECTION, "tone_map_mode", TONE_MAP_AGX)), TONE_MAP_REINHARD, TONE_MAP_LINEAR)
@@ -1936,20 +2247,29 @@ func _save_settings() -> void:
 	config.set_value(SETTINGS_SECTION, "fractal_level", selected_fractal_level)
 	config.set_value(SETTINGS_SECTION, "automatic_quality", automatic_quality)
 	config.set_value(SETTINGS_SECTION, "reduced_motion", reduced_motion_toggle.button_pressed if is_instance_valid(reduced_motion_toggle) else false)
+	config.set_value(SETTINGS_SECTION, "last_game_mode", current_game_mode)
+	config.set_value(SETTINGS_SECTION, "ui_size_preset", _ui_size_preset)
+	config.set_value(SETTINGS_SECTION, "high_contrast", _high_contrast_setting)
+	config.set_value(SETTINGS_SECTION, "control_hints", _control_hints_setting)
+	config.set_value(SETTINGS_SECTION, "steering_hint_complete", _steering_hint_complete)
+	config.set_value(SETTINGS_SECTION, "speed_hint_complete", _speed_hint_complete)
+	config.set_value(SETTINGS_SECTION, "pause_hint_complete", _pause_hint_complete)
 	config.set_value(SETTINGS_SECTION, "music_enabled", _music_enabled_setting)
 	config.set_value(SETTINGS_SECTION, "music_volume", _music_volume_setting)
 	config.set_value(SETTINGS_SECTION, "controller_deadzone", _controller_deadzone_setting)
 	config.set_value(SETTINGS_SECTION, "controller_outer_deadzone", _controller_outer_deadzone_setting)
 	config.set_value(SETTINGS_SECTION, "controller_response_curve", _controller_response_curve_setting)
 	config.set_value(SETTINGS_SECTION, "controller_calibration", flight_input.calibration_offsets if is_instance_valid(flight_input) else {})
-	config.set_value(SETTINGS_SECTION, "settings_schema_version", 3)
+	config.set_value(SETTINGS_SECTION, "settings_schema_version", 4)
 	config.set_value(SETTINGS_SECTION, "view_mode", String(_selected_view_mode))
 	settings_store.save_config(config)
 
 
 func _update_metrics(latest_frame_ms: float) -> void:
 	var preset: Dictionary = QUALITY_PRESETS[current_quality]
-	var target_state := "PASS" if quality_controller.get_percentile(0.95) <= quality_controller.target_frame_ms else "OVER"
+	var target_state := "WARMUP" if quality_controller.samples.is_empty() else (
+		"PASS" if quality_controller.get_percentile(0.95) <= quality_controller.target_frame_ms else "OVER"
+	)
 	var metrics_text := "%d FPS • %.1f ms latest • %s\np90 %.1f • p95 %.1f • %s%s\n%d×%d • %.2f scale • %d steps • %s" % [
 		Engine.get_frames_per_second(), latest_frame_ms, target_state,
 		quality_controller.get_percentile(0.90), quality_controller.get_percentile(0.95),
@@ -1961,7 +2281,7 @@ func _update_metrics(latest_frame_ms: float) -> void:
 	if is_instance_valid(diagnostics_overlay):
 		var static_memory_mb := Performance.get_monitor(Performance.MEMORY_STATIC) / (1024.0 * 1024.0)
 		diagnostics_overlay.set_details(
-			"%d FPS  %.1f ms  p90 %.1f  p95 %.1f  %s\n%s %s  %.2fx  %dx%d  %d steps  %s\n%s  %.1fx/%.1fx  %s / %s\nDraw %d  primitives %d  memory %.1f MB  nodes %d  resources %d\nView %s  Traveler %s  radius %.2f\nClear %.3f / %.3f  predicted %.3f  look %.2f  probes %d\nCorridor risk %.2f  strength %.2f  radius %.2f\nSafety %s  avoidance %s  recovery %s  safe age %.1fs\nCamera desired %.2f  actual %.2f  obstruction %.3f  collision %dus" % [
+			"%d FPS  %.1f ms  p90 %.1f  p95 %.1f  %s\n%s %s  %.2fx  %dx%d  %d steps  %s\n%s  %.1fx/%.1fx  %s / %s\nDraw %d  primitives %d  memory %.1f MB  nodes %d  resources %d\nView %s  Traveler %s  radius %.2f\nClear %.3f / %.3f  predicted %.3f  look %.2f  probes %d\nCorridor risk %.2f  strength %.2f  radius %.2f\nSafety %s  avoidance %s  recovery %s  safe age %.1fs\nCamera desired %.2f  actual %.2f  obstruction %.3f\nCPU safety %dus  camera %dus  GPU fractal %s / Traveler %s\nRender resizes %d  last %dms" % [
 				Engine.get_frames_per_second(), latest_frame_ms,
 				quality_controller.get_percentile(0.90), quality_controller.get_percentile(0.95), target_state,
 				str(preset["name"]), "AUTO" if automatic_quality else "MANUAL",
@@ -1979,14 +2299,27 @@ func _update_metrics(latest_frame_ms: float) -> void:
 				safety_controller.state_name(), "on" if safety_controller.avoidance_active else "off", safety_controller.recovery_stage,
 				flight_rig.last_safe_age,
 				view_mode_controller.camera_controller.desired_distance, view_mode_controller.camera_controller.actual_distance,
-				view_mode_controller.camera_controller.obstruction_clearance, safety_controller.collision_cpu_us
+				view_mode_controller.camera_controller.obstruction_clearance, safety_controller.collision_cpu_us, camera_cpu_us,
+				_gpu_time_text(render_viewport), _gpu_time_text(traveler_viewport),
+				render_resize_count, last_render_resize_ms
 			]
 		)
+
+
+func _gpu_time_text(viewport: SubViewport) -> String:
+	if not _performance_diagnostics_setting or viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED:
+		return "n/a"
+	var milliseconds := RenderingServer.viewport_get_measured_render_time_gpu(viewport.get_viewport_rid())
+	return "%.2fms" % milliseconds if milliseconds > 0.0 else "n/a"
 
 
 func _sync_diagnostics_visibility() -> void:
 	if is_instance_valid(diagnostics_overlay):
 		diagnostics_overlay.visible = _performance_diagnostics_setting and interface_state == InterfaceState.PLAYING
+	# Timestamp queries are opt-in: normal gameplay does not pay for GPU profiling.
+	for viewport in [render_viewport, traveler_viewport]:
+		if is_instance_valid(viewport):
+			RenderingServer.viewport_set_measure_render_time(viewport.get_viewport_rid(), _performance_diagnostics_setting)
 
 
 func get_performance_p90_ms() -> float:
@@ -2009,10 +2342,106 @@ func is_quality_transition_cooling_down() -> bool:
 	return quality_controller.is_cooling_down()
 
 
+func _start_selected_mode() -> void:
+	if current_game_mode == GameMode.SURVIVAL:
+		_start_survival()
+	else:
+		_start_endless()
+
+
+func _select_game_mode(mode: int) -> void:
+	current_game_mode = clampi(mode, GameMode.ENDLESS, GameMode.SURVIVAL) as GameMode
+	_update_mode_card_labels()
+	_save_settings()
+
+
+func _update_mode_card_labels() -> void:
+	if not is_instance_valid(play_button) or not is_instance_valid(survival_button):
+		return
+	play_button.text = "%s  ✦   %s\nFly safely and discover" % ["✓" if current_game_mode == GameMode.ENDLESS else " ", UICopy.EXPLORE]
+	survival_button.text = "%s  ♥   %s\nDodge, protect hearts, score" % ["✓" if current_game_mode == GameMode.SURVIVAL else " ", UICopy.CHALLENGE]
+	_apply_mode_button_theme(play_button, Color(0.025, 0.34, 0.40) if current_game_mode == GameMode.ENDLESS else Color(0.025, 0.12, 0.16), Color.WHITE if current_game_mode == GameMode.ENDLESS else Color(0.22, 0.62, 0.66))
+	_apply_mode_button_theme(survival_button, Color(0.48, 0.16, 0.08) if current_game_mode == GameMode.SURVIVAL else Color(0.18, 0.07, 0.04), Color.WHITE if current_game_mode == GameMode.SURVIVAL else Color(0.65, 0.34, 0.16))
+	play_button.scale = Vector2.ONE * (1.02 if current_game_mode == GameMode.ENDLESS else 1.0)
+	survival_button.scale = Vector2.ONE * (1.02 if current_game_mode == GameMode.SURVIVAL else 1.0)
+	if is_instance_valid(home_play_button):
+		home_play_button.text = "▶   %s\n%s" % [UICopy.PLAY, UICopy.CHALLENGE if current_game_mode == GameMode.SURVIVAL else UICopy.EXPLORE]
+
+
+func _show_game_select() -> void:
+	interface_state = InterfaceState.MENU
+	menu_navigation.open(MenuNavigationControllerScript.GAME_SELECT)
+
+
+func _show_world_select() -> void:
+	menu_navigation.open(MenuNavigationControllerScript.WORLD_SELECT)
+
+
+func _show_advanced_settings() -> void:
+	menu_navigation.open(MenuNavigationControllerScript.ADVANCED_SETTINGS)
+
+
+func _show_pause_menu() -> void:
+	if interface_state != InterfaceState.PLAYING:
+		return
+	_complete_control_hint(&"pause")
+	interface_state = InterfaceState.MENU
+	menu_navigation.reset(MenuNavigationControllerScript.PAUSE)
+	safe_root.visible = true
+	throttle_panel.visible = false
+	menu_panel.visible = true
+	gameplay_overlay.visible = false
+	_sync_render_activity()
+
+
+func _resume_playing() -> void:
+	_start_playing()
+
+
+func _reset_and_resume() -> void:
+	_reset_flight()
+	_start_playing()
+
+
+func _navigate_back() -> void:
+	if menu_navigation.can_go_back():
+		menu_navigation.back()
+	else:
+		_show_main_menu()
+
+
+func _on_menu_screen_changed(screen: StringName, _previous: StringName) -> void:
+	if not is_instance_valid(main_menu_content):
+		return
+	settings_visible = screen == MenuNavigationControllerScript.SETTINGS or screen == MenuNavigationControllerScript.ADVANCED_SETTINGS
+	character_visible = screen == MenuNavigationControllerScript.TRAVELER
+	main_menu_content.visible = screen == MenuNavigationControllerScript.HOME
+	game_select_content.visible = screen == MenuNavigationControllerScript.GAME_SELECT
+	world_select_content.get_parent().visible = screen == MenuNavigationControllerScript.WORLD_SELECT
+	pause_content.visible = screen == MenuNavigationControllerScript.PAUSE
+	settings_scroll.visible = screen == MenuNavigationControllerScript.SETTINGS
+	advanced_settings_scroll.visible = screen == MenuNavigationControllerScript.ADVANCED_SETTINGS
+	character_scroll.visible = screen == MenuNavigationControllerScript.TRAVELER
+	game_over_content.visible = screen == MenuNavigationControllerScript.RESULTS
+	var focus_target: Control = null
+	match screen:
+		MenuNavigationControllerScript.HOME: focus_target = home_play_button
+		MenuNavigationControllerScript.GAME_SELECT: focus_target = play_button if current_game_mode == GameMode.ENDLESS else survival_button
+		MenuNavigationControllerScript.WORLD_SELECT: focus_target = world_card_buttons[selected_fractal_level]
+		MenuNavigationControllerScript.PAUSE: focus_target = pause_continue_button
+		MenuNavigationControllerScript.SETTINGS: focus_target = ui_size_selector
+		MenuNavigationControllerScript.ADVANCED_SETTINGS: focus_target = performance_diagnostics_toggle
+		MenuNavigationControllerScript.TRAVELER: focus_target = character_back_button
+		MenuNavigationControllerScript.RESULTS: focus_target = retry_button
+	if is_instance_valid(focus_target):
+		focus_target.call_deferred("grab_focus")
+
+
 func _start_endless() -> void:
 	current_game_mode = GameMode.ENDLESS
 	survival_session.stop()
-	survival_button.text = "◇  Start Survival"
+	_update_mode_card_labels()
+	_save_settings()
 	speed_slider.min_value = 0.25
 	speed = clampf(speed, speed_slider.min_value, speed_slider.max_value)
 	speed_slider.value = speed
@@ -2025,6 +2454,8 @@ func _start_survival() -> void:
 		_start_playing()
 		return
 	current_game_mode = GameMode.SURVIVAL
+	_update_mode_card_labels()
+	_save_settings()
 	speed_slider.min_value = 1.5
 	speed = maxf(speed, speed_slider.min_value)
 	speed_slider.value = speed
@@ -2050,7 +2481,6 @@ func _start_survival() -> void:
 	flight_rig.validate_safe_transform()
 	survival_session.position = flight_rig.position
 	camera_position = flight_rig.position
-	survival_button.text = "◇  Resume Survival"
 	_start_playing()
 
 
@@ -2073,6 +2503,7 @@ func _start_playing() -> void:
 	gameplay_hud_panel.visible = current_game_mode == GameMode.SURVIVAL
 	_sync_diagnostics_visibility()
 	flight_input.reset()
+	_update_control_hint()
 	_sync_render_activity()
 
 
@@ -2086,12 +2517,9 @@ func _show_main_menu() -> void:
 	gameplay_overlay.visible = false
 	gameplay_hud_panel.visible = false
 	_sync_diagnostics_visibility()
-	main_menu_content.visible = true
-	settings_scroll.visible = false
-	character_scroll.visible = false
+	menu_navigation.reset(MenuNavigationControllerScript.HOME)
 	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	game_over_content.visible = false
-	survival_button.text = "◇  Resume Survival" if current_game_mode == GameMode.SURVIVAL and survival_session.active else "◇  Start Survival"
+	_update_mode_card_labels()
 	flight_input.reset()
 	_sync_render_activity()
 
@@ -2099,20 +2527,21 @@ func _show_main_menu() -> void:
 func _show_settings() -> void:
 	settings_visible = true
 	character_visible = false
-	main_menu_content.visible = false
-	settings_scroll.visible = true
-	character_scroll.visible = false
+	menu_navigation.open(MenuNavigationControllerScript.SETTINGS)
 	character_preview_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	game_over_content.visible = false
 	flight_input.reset()
 
 
 func _handle_back_command() -> void:
 	if interface_state == InterfaceState.PLAYING:
-		_show_main_menu()
+		_show_pause_menu()
 	elif character_visible:
 		_request_character_back()
-	elif settings_visible or interface_state == InterfaceState.GAME_OVER:
+	elif menu_navigation.current_screen == MenuNavigationControllerScript.PAUSE:
+		_resume_playing()
+	elif menu_navigation.can_go_back():
+		menu_navigation.back()
+	else:
 		_show_main_menu()
 
 
@@ -2183,10 +2612,7 @@ func _update_survival_hud() -> void:
 func _sync_gameplay_menu_visibility() -> void:
 	if not is_instance_valid(gameplay_menu_button):
 		return
-	if not PlatformCapabilities.should_show_inflight_menu():
-		gameplay_menu_button.visible = false
-		return
-	gameplay_menu_button.visible = interface_state == InterfaceState.PLAYING and not PlatformCapabilities.is_web_fullscreen()
+	gameplay_menu_button.visible = interface_state == InterfaceState.PLAYING
 
 
 func _sync_world_state_for_physics() -> void:
@@ -2195,7 +2621,7 @@ func _sync_world_state_for_physics() -> void:
 	world_state.fractal_type = int(info["active"])
 	world_state.geometry_iterations = WorldState.GEOMETRY_ITERATIONS
 	world_state.survival_mode = current_game_mode == GameMode.SURVIVAL
-	if world_state.survival_mode:
+	if world_state.survival_mode and is_instance_valid(survival_session):
 		survival_session.set_fractal_level(world_state.fractal_type)
 		survival_session.set_fractal_iterations(WorldState.GEOMETRY_ITERATIONS)
 		survival_session.world.update(flight_rig.position)
@@ -2218,6 +2644,8 @@ func _select_traveler(identifier: StringName) -> void:
 		return
 	_selected_traveler_id = traveler_definition.identifier
 	safety_controller.set_collision_radius(traveler_definition.normalized_collision_radius())
+	if is_instance_valid(survival_session):
+		survival_session.set_player_radius(safety_controller.collision_radius)
 	if is_instance_valid(traveler_visual):
 		traveler_visual.queue_free()
 	traveler_visual = traveler_definition.visual_scene.instantiate() as Node3D
@@ -2239,9 +2667,11 @@ func _configure_traveler_visual() -> void:
 func _sync_traveler_presentation(presentation: Transform3D) -> void:
 	if not is_instance_valid(traveler_viewport):
 		return
-	var traveler_enabled := view_mode_controller.view_mode == ViewModeController.TRAVELER and interface_state == InterfaceState.PLAYING
+	var traveler_enabled := view_mode_controller.view_mode == ViewModeController.TRAVELER and interface_state == InterfaceState.PLAYING and _application_focused
 	traveler_output_rect.visible = traveler_enabled
-	traveler_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if traveler_enabled else SubViewport.UPDATE_DISABLED
+	var update_mode := SubViewport.UPDATE_ALWAYS if traveler_enabled else SubViewport.UPDATE_DISABLED
+	if traveler_viewport.render_target_update_mode != update_mode:
+		traveler_viewport.render_target_update_mode = update_mode
 	if not traveler_enabled:
 		return
 	traveler_camera.transform = presentation
@@ -2301,9 +2731,7 @@ func _on_survival_game_over(distance: float, final_score: int) -> void:
 	throttle_panel.visible = false
 	menu_panel.visible = true
 	gameplay_overlay.visible = false
-	main_menu_content.visible = false
-	settings_scroll.visible = false
-	game_over_content.visible = true
+	menu_navigation.reset(MenuNavigationControllerScript.RESULTS)
 	game_over_result.text = "Distance: %d m\nScore: %d" % [floori(distance), final_score]
 	_sync_diagnostics_visibility()
 	_sync_render_activity()

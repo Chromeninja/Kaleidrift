@@ -4,6 +4,7 @@ extends RefCounted
 const CAMERA_RADIUS := 0.12
 const SEGMENT_SAMPLES := 8
 const REFINEMENT_STEPS := 3
+const MIN_CLEARANCE := 0.06
 
 var position := Vector3.ZERO
 var orientation := Quaternion.IDENTITY
@@ -41,7 +42,7 @@ func update(
 		var sample := rig.position.lerp(desired, amount)
 		var clearance := query.get_clearance(sample, CAMERA_RADIUS, SDFQueryService.QueryMask.ALL, true)
 		obstruction_clearance = minf(obstruction_clearance, clearance)
-		if clearance < 0.06:
+		if clearance < MIN_CLEARANCE:
 			clear_amount = float(index - 1) / float(SEGMENT_SAMPLES)
 			break
 	if clear_amount < 1.0:
@@ -49,13 +50,12 @@ func update(
 		var high := minf(clear_amount + 1.0 / float(SEGMENT_SAMPLES), 1.0)
 		for _step in range(REFINEMENT_STEPS):
 			var middle := (low + high) * 0.5
-			if query.get_clearance(rig.position.lerp(desired, middle), CAMERA_RADIUS, SDFQueryService.QueryMask.ALL, true) >= 0.06:
+			if query.get_clearance(rig.position.lerp(desired, middle), CAMERA_RADIUS, SDFQueryService.QueryMask.ALL, true) >= MIN_CLEARANCE:
 				low = middle
 			else:
 				high = middle
 		clear_amount = low
 	var resolved := rig.position.lerp(desired, clear_amount)
-	actual_distance = rig.position.distance_to(resolved)
 	var up := rig.up()
 	if absf(resolved.direction_to(target).dot(up)) > 0.995:
 		up = Vector3.UP
@@ -71,4 +71,12 @@ func update(
 		var position_tau := 0.06 if retracting else 0.24
 		position = position.lerp(resolved, 1.0 - exp(-delta / position_tau))
 		orientation = orientation.slerp(desired_orientation, 1.0 - exp(-delta / 0.16)).normalized()
+		# A safe destination does not make interpolation from the old camera safe.
+		# Retract immediately if movement, rotation, or corridor changes put the
+		# smoothed camera inside geometry; smooth outward again on later frames.
+		var final_clearance := query.get_clearance(position, CAMERA_RADIUS, SDFQueryService.QueryMask.ALL, true)
+		obstruction_clearance = minf(obstruction_clearance, final_clearance)
+		if final_clearance < MIN_CLEARANCE:
+			position = resolved
+	actual_distance = rig.position.distance_to(position)
 	return Transform3D(Basis(orientation), position)

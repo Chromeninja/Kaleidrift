@@ -324,6 +324,8 @@ godot --headless --path . --script res://scripts/tests/world_query_test.gd
 godot --headless --path . --script res://scripts/tests/traveler_integration_test.gd
 godot --headless --path . --script res://scripts/tests/character_store_test.gd
 godot --headless --path . --script res://scripts/tests/character_screen_integration_test.gd
+godot --headless --path . --script res://scripts/tests/menu_navigation_test.gd
+godot --headless --path . --script res://scripts/tests/child_menu_ui_test.gd
 godot --headless --path . --export-debug "Android" build/android/Kaleidrift-debug.apk
 godot --headless --path . --export-debug "Windows Desktop" build/windows/Kaleidrift.exe
 godot --headless --rendering-method gl_compatibility --path . --export-release "Web" build/web/index.html

@@ -32,6 +32,15 @@ uniform float gamut_intensity = 1.0;
 uniform int tone_map_mode = 0;
 
 const float EPSILON = 0.0025;
+// Fixed geometry rotations: avoid trigonometry inside every ray/normal query.
+const vec4 FOLD_ROTATIONS[6] = {
+	vec4(0.980066578, 0.198669331, 0.952333570, -0.305058636),
+	vec4(0.928664636, 0.370920469, 0.980066578, -0.198669331),
+	vec4(0.847255111, 0.531186198, 0.995952733, -0.089878549),
+	vec4(0.738468559, 0.674287912, 0.999800007, 0.019998667),
+	vec4(0.605820157, 0.795601620, 0.991561894, 0.129634143),
+	vec4(0.453596121, 0.891207360, 0.971337975, 0.237702626)
+};
 
 mat2 rotate_2d(float angle) {
 	float c = cos(angle);
@@ -96,15 +105,11 @@ float fractal_fold(vec3 point) {
 	float scale = 1.0;
 	// Structural geometry is fixed and quality-independent. Motion is applied by
 	// palette and presentation effects rather than moving collision surfaces.
-	float angle = 0.20;
-
-	for (int iteration = 0; iteration < 7; iteration++) {
-		if (iteration >= 6) {
-			break;
-		}
+	for (int iteration = 0; iteration < 6; iteration++) {
+		vec4 rotation = FOLD_ROTATIONS[iteration];
 		p = abs(p) - vec3(1.12, 0.96, 1.06);
-		p.xy = rotate_2d(angle + float(iteration) * 0.18) * p.xy;
-		p.yz = rotate_2d(-0.31 + float(iteration) * 0.11) * p.yz;
+		p.xy = mat2(vec2(rotation.x, -rotation.y), vec2(rotation.y, rotation.x)) * p.xy;
+		p.yz = mat2(vec2(rotation.z, -rotation.w), vec2(rotation.w, rotation.z)) * p.yz;
 		p *= 1.34;
 		scale *= 1.34;
 	}
@@ -244,14 +249,15 @@ float world_sdf(vec3 point) {
 	return survival_mode ? min(structure, survival_obstacle_sdf(point)) : structure;
 }
 
-vec3 estimate_normal(vec3 point) {
-	vec2 e = vec2(EPSILON, -EPSILON);
-	return normalize(
-		e.xyy * world_sdf(point + e.xyy)
-		+ e.yyx * world_sdf(point + e.yyx)
-		+ e.yxy * world_sdf(point + e.yxy)
-		+ e.xxx * world_sdf(point + e.xxx)
-	);
+vec3 estimate_normal(vec3 point, float sample_radius, vec3 fallback) {
+	vec2 e = vec2(1.0, -1.0);
+	vec3 gradient = e.xyy * world_sdf(point + e.xyy * sample_radius)
+		+ e.yyx * world_sdf(point + e.yyx * sample_radius)
+		+ e.yxy * world_sdf(point + e.yxy * sample_radius)
+		+ e.xxx * world_sdf(point + e.xxx * sample_radius);
+	float magnitude_squared = dot(gradient, gradient);
+	return magnitude_squared > 0.000000000001 && !isinf(magnitude_squared)
+		? gradient * inversesqrt(magnitude_squared) : fallback;
 }
 
 vec3 palette(float value, vec3 a, vec3 b, vec3 c, vec3 d) {
@@ -366,6 +372,11 @@ void fragment() {
 	);
 
 	float distance_traveled = 0.02;
+	// The gyroid is an implicit field with gradient bounded by 1.75, not
+	// a unit-distance field. Keep geometry identical to CPU safety queries.
+	float step_factor = fractal_type == 0 ? 0.55 : 0.72;
+	float pixel_footprint = 1.0 / (max(viewport_size.y, 1.0) * focal_length);
+	float hit_epsilon = EPSILON;
 	float glow_accumulator = 0.0;
 	bool hit = false;
 	vec3 point = camera_position;
@@ -375,12 +386,15 @@ void fragment() {
 		}
 		point = camera_position + ray_direction * distance_traveled;
 		float distance_to_surface = world_sdf(point);
-		glow_accumulator += exp(-abs(distance_to_surface) * 2.4) * 0.006;
-		if (distance_to_surface < EPSILON * max(1.0, distance_traveled * 0.10)) {
+		// Resolve subpixel surfaces consistently as resolution and distance vary.
+		hit_epsilon = max(EPSILON, distance_traveled * pixel_footprint * 0.5);
+		glow_accumulator += exp(-abs(distance_to_surface) * 2.4) * 0.006 * (step_factor / 0.72);
+		if (distance_to_surface < hit_epsilon) {
 			hit = true;
 			break;
 		}
-		distance_traveled += max(distance_to_surface * 0.72, 0.008);
+		// A fixed minimum larger than hit_epsilon can skip both faces of a wall.
+		distance_traveled += distance_to_surface * step_factor;
 	}
 
 	vec3 background_top = vec3(0.010, 0.004, 0.036);
@@ -388,7 +402,8 @@ void fragment() {
 	vec3 color = mix(background_bottom, background_top, clamp(UV.y, 0.0, 1.0));
 
 	if (hit) {
-		vec3 normal = estimate_normal(point);
+		float normal_radius = clamp(distance_traveled * pixel_footprint, EPSILON, 0.025);
+		vec3 normal = estimate_normal(point, normal_radius, -ray_direction);
 		color = region_color(point, distance_traveled, normal);
 		float fog = 1.0 - exp(-distance_traveled * 0.032);
 		color = mix(color, background_top, fog);

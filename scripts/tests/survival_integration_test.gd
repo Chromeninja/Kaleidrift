@@ -1,6 +1,7 @@
 extends SceneTree
 
 const FractalLevelsScript := preload("res://scripts/fractal_levels.gd")
+const SurvivalWorldScript := preload("res://scripts/gameplay/survival_world.gd")
 
 func _init() -> void:
 	call_deferred("_run")
@@ -23,7 +24,7 @@ func _run() -> void:
 	assert(main_scene.survival_session.distance_traveled > 0.0)
 	assert(main_scene.shader_material.get_shader_parameter("survival_mode"))
 	assert(main_scene.gameplay_overlay.visible)
-	assert(not main_scene.gameplay_menu_button.visible)
+	assert(main_scene.gameplay_menu_button.visible)
 	assert(main_scene.gameplay_hud_panel.visible)
 	main_scene.performance_diagnostics_toggle.button_pressed = false
 	assert(not main_scene.diagnostics_overlay.visible)
@@ -68,6 +69,28 @@ func _run() -> void:
 	assert(main_scene.survival_session.position.distance_to(mixed_spawn_position) > 0.05)
 
 	var session = main_scene.survival_session
+	assert(is_equal_approx(session.player_radius, main_scene.safety_controller.collision_radius))
+	# Damage collision must use every authoritative course obstacle, not only the
+	# capped array sent to the ray-march shader.
+	session.world.obstacles.clear()
+	for index in range(session.world.MAX_RENDER_OBSTACLES):
+		session.world.obstacles.append(SurvivalWorldScript.CourseObstacle.new(
+			"rendered:%d" % index,
+			session.position + Vector3(float(index + 1), 0.0, 0.0),
+			0.5
+		))
+	var hidden_obstacle = SurvivalWorldScript.CourseObstacle.new(
+		"authoritative-only",
+		session.position + Vector3(20.0, 0.0, 0.0),
+		0.75
+	)
+	session.world.obstacles.append(hidden_obstacle)
+	var render_obstacles: Array[Vector4] = session.world.get_shader_obstacles(session.position)
+	for rendered in render_obstacles:
+		assert(Vector3(rendered.x, rendered.y, rendered.z) != hidden_obstacle.position)
+	var hidden_start: Vector3 = hidden_obstacle.position + Vector3.FORWARD * (hidden_obstacle.radius + session.player_radius + 0.5)
+	var hidden_end: Vector3 = hidden_obstacle.position - Vector3.FORWARD * (hidden_obstacle.radius + session.player_radius + 0.5)
+	assert(session.external_segment_hits_hazard(hidden_start, hidden_end))
 	session.world.obstacles.clear()
 	session.health.invulnerability_remaining = 0.0
 	var rollback_position: Vector3 = session.last_safe_position

@@ -62,6 +62,7 @@ func _test_manual_stability() -> void:
 		assert(not controller.sample(0.5, 80.0))
 	assert(controller.resolved_tier == 1)
 	assert(is_equal_approx(controller.resolved_scale, 0.64))
+	assert(is_equal_approx(controller.get_percentile(0.95), 80.0))
 
 
 func _test_saved_settings_compatibility() -> void:

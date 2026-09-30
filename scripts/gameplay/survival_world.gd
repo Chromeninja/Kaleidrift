@@ -31,8 +31,8 @@ var current_cell := EMPTY_CELL
 var neighborhood_revision := 0
 var shader_obstacle_build_count := 0
 
-static func variation_seed_for_world_seed(seed: int) -> float:
-	return fposmod(float(abs(seed)), 10000.0)
+static func variation_seed_for_world_seed(world_seed_value: int) -> float:
+	return fposmod(float(abs(world_seed_value)), 10000.0)
 
 
 func reset(new_world_seed: int, player_position: Vector3, new_fractal_level: int = FractalLevelsScript.Type.FOLD) -> void:
@@ -40,7 +40,7 @@ func reset(new_world_seed: int, player_position: Vector3, new_fractal_level: int
 	scored_obstacles.clear()
 	world_seed = new_world_seed
 	world_variation_seed = variation_seed_for_world_seed(new_world_seed)
-	fractal_level = new_fractal_level
+	fractal_level = new_fractal_level as FractalLevelsScript.Type
 	current_cell = EMPTY_CELL
 	update(player_position)
 
